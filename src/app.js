@@ -95,6 +95,14 @@ function createApp(options = {}) {
 
   const app = express();
   app.disable('x-powered-by');
+  const trustedProxies = options.trustProxy ?? process.env.TRUST_PROXY;
+  if (trustedProxies) {
+    const proxies = (Array.isArray(trustedProxies) ? trustedProxies : String(trustedProxies).split(','))
+      .map((proxy) => proxy.trim())
+      .filter(Boolean);
+    if (!proxies.length) throw new Error('TRUST_PROXY must list the trusted proxy IPs or CIDRs.');
+    app.set('trust proxy', proxies);
+  }
   app.use(helmet());
   app.use(express.json({ limit: '2mb' }));
   app.use('/api', rateLimit({
@@ -149,19 +157,14 @@ function createApp(options = {}) {
     }
   }
 
-  const loginAttempts = new Map();
-  const authRateLimit = (req, res, next) => {
-    const now = Date.now();
-    const attempts = loginAttempts.get(req.ip) || { count: 0, start: now };
-    if (now - attempts.start > 15 * 60 * 1000) {
-      attempts.count = 0;
-      attempts.start = now;
-    }
-    if (attempts.count >= 10) return res.status(429).json({ error: 'محاولات كثيرة. حاول بعد 15 دقيقة.' });
-    attempts.count += 1;
-    loginAttempts.set(req.ip, attempts);
-    next();
-  };
+  const authRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: 'محاولات كثيرة. حاول بعد 15 دقيقة.' }
+  });
 
   app.get('/api/auth/status', (_req, res) => {
     res.json({ configured: db.prepare('SELECT COUNT(*) AS count FROM users').get().count > 0 });
@@ -198,7 +201,6 @@ function createApp(options = {}) {
     if (!user || !crypto.timingSafeEqual(actual, expected)) {
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
     }
-    loginAttempts.delete(req.ip);
     res.json({ token: makeToken(user.id), username: user.username });
   });
 
