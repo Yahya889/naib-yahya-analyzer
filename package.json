@@ -1,0 +1,13 @@
+{
+  "name": "naib-yahya-analyzer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Arabic contract review, bookkeeping, and media dashboard",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
