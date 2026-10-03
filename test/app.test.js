@@ -114,4 +114,8 @@ test('authenticates users and provides protected document, accounting, and media
     headers: authHeaders(staff.token),
     body: rejectedUpload
   })).status, 400);
+
+  let limitedResponse;
+  for (let i = 0; i < 300; i += 1) limitedResponse = await request('/api/health');
+  assert.equal(limitedResponse.status, 429);
 });

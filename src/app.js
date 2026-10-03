@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const helmet = require('helmet');
 const multer = require('multer');
 
@@ -96,6 +97,13 @@ function createApp(options = {}) {
   app.disable('x-powered-by');
   app.use(helmet());
   app.use(express.json({ limit: '2mb' }));
+  app.use('/api', rateLimit({
+    windowMs: 60 * 1000,
+    limit: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'طلبات كثيرة. حاول بعد دقيقة.' }
+  }));
 
   function audit(action, details = {}) {
     db.prepare('INSERT INTO audit_log (action, details) VALUES (?, ?)').run(action, JSON.stringify(details));
@@ -108,7 +116,11 @@ function createApp(options = {}) {
   }
 
   function requireAuth(req, res, next) {
-    const token = req.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+    const authorization = req.get('authorization') || '';
+    const token = authorization.slice(0, 7).toLowerCase() === 'bearer '
+      ? authorization.slice(7).trim()
+      : '';
+    if (token.length > 2048) return res.status(401).json({ error: 'رمز الدخول غير صالح.' });
     if (!token) return res.status(401).json({ error: 'يجب تسجيل الدخول أولاً.' });
     const [payload, signature] = token.split('.');
     if (!payload || !signature) return res.status(401).json({ error: 'رمز الدخول غير صالح.' });
