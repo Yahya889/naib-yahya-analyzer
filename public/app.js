@@ -233,8 +233,23 @@ function renderAnalysis(documentResult) {
   const disclaimer = document.createElement('p');
   disclaimer.className = 'result-warning';
   disclaimer.textContent = documentResult.analysis.disclaimer;
-  result.append(score, title, subtitle, clauses, disclaimer);
-  addPrintButton(result);
+  const reportActions = document.createElement('div');
+  reportActions.className = 'list-actions';
+  addPrintButton(reportActions);
+  const jsonButton = document.createElement('button');
+  jsonButton.type = 'button';
+  jsonButton.className = 'button secondary';
+  jsonButton.textContent = 'تنزيل JSON';
+  jsonButton.addEventListener('click', () => {
+    const report = {
+      title: documentResult.title,
+      content: documentResult.content,
+      analysis: documentResult.analysis
+    };
+    downloadBlob(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }), `analysis-${documentResult.id}.json`);
+  });
+  reportActions.append(jsonButton);
+  result.append(score, title, subtitle, clauses, disclaimer, reportActions);
 }
 
 async function loadDocuments() {

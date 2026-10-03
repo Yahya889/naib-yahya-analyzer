@@ -245,7 +245,7 @@ function createApp(options = {}) {
     const result = db.prepare('INSERT INTO documents (title, content, analysis_json) VALUES (?, ?, ?)')
       .run(title.trim(), content, JSON.stringify(analysis));
     audit('تحليل مستند', { documentId: result.lastInsertRowid });
-    res.status(201).json({ id: result.lastInsertRowid, title: title.trim(), analysis });
+    res.status(201).json({ id: result.lastInsertRowid, title: title.trim(), content, analysis });
   });
 
   app.get('/api/documents/:id', requireAuth, (req, res) => {
