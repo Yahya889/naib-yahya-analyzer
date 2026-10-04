@@ -1,97 +1,124 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#102d2b">
-  <title>نائب | منصة إدارة الأعمال</title>
-  <link rel="stylesheet" href="/style.css">
-</head>
-<body>
-  <aside class="sidebar">
-    <a class="brand" href="/"><span class="brand-mark">ن</span><span>نائب<small>منصة إدارة الأعمال</small></span></a>
-    <p class="nav-label">القائمة الرئيسية</p>
-    <nav>
-      <a class="nav-link active" href="#overview" data-view="overview"><span>◫</span>نظرة عامة</a>
-      <a class="nav-link" href="#contracts" data-view="contracts"><span>▤</span>تحليل العقود</a>
-      <a class="nav-link" href="#finance" data-view="finance"><span>◈</span>المحاسبة المالية</a>
-      <a class="nav-link" href="#media" data-view="media"><span>▧</span>إدارة الوسائط</a>
-    </nav>
-    <div class="sidebar-note"><span class="status-dot"></span>مساحة العمل نشطة<small>بياناتك محفوظة محليًا</small></div>
-  </aside>
-  <main>
-    <header class="topbar">
-      <div><span class="eyebrow">مساحة العمل / الرئيسية</span><h1 id="page-title">نظرة عامة</h1></div>
-      <div class="user-chip"><span class="avatar">م</span><span>مساحة العمل<small>مسؤول النظام</small></span></div>
-    </header>
-    <section class="view active" id="overview">
-      <div class="welcome">
-        <div><span class="eyebrow light">السبت، مساحة عملك جاهزة</span><h2>أهلاً بك في نائب</h2><p>أدر عقودك وحساباتك ومستنداتك من مكان واحد.</p></div>
-        <span class="welcome-icon" aria-hidden="true">✳</span>
-      </div>
-      <div class="stats-grid">
-        <article class="stat-card"><span class="stat-icon indigo">▤</span><span class="stat-label">العقود المحفوظة</span><strong id="stat-contracts">٠</strong><small>عقد في مساحة العمل</small></article>
-        <article class="stat-card"><span class="stat-icon green">↗</span><span class="stat-label">إجمالي الإيرادات</span><strong id="stat-income">٠ ر.س</strong><small>الحركات المسجلة</small></article>
-        <article class="stat-card"><span class="stat-icon coral">↘</span><span class="stat-label">إجمالي المصروفات</span><strong id="stat-expenses">٠ ر.س</strong><small>الحركات المسجلة</small></article>
-        <article class="stat-card"><span class="stat-icon gold">▧</span><span class="stat-label">الملفات والوسائط</span><strong id="stat-files">٠</strong><small>ملف محفوظ</small></article>
-      </div>
-      <div class="overview-grid">
-        <article class="panel">
-          <div class="panel-heading"><div><span class="eyebrow">المؤشرات المالية</span><h3>الإيرادات والمصروفات</h3></div><span class="legend"><i class="income-dot"></i>إيرادات <i class="expense-dot"></i>مصروفات</span></div>
-          <div class="chart" id="finance-chart" aria-label="مقارنة الإيرادات والمصروفات"></div>
-        </article>
-        <article class="panel quick-panel">
-          <div class="panel-heading"><div><span class="eyebrow">ابدأ الآن</span><h3>إجراءات سريعة</h3></div></div>
-          <button class="quick-link" data-go="contracts"><span class="quick-icon indigo">▤</span><span>حلّل عقدًا جديدًا<small>راجع البنود والمخاطر المحتملة</small></span><b>←</b></button>
-          <button class="quick-link" data-go="finance"><span class="quick-icon green">＋</span><span>سجّل حركة مالية<small>أضف إيرادًا أو مصروفًا</small></span><b>←</b></button>
-          <button class="quick-link" data-go="media"><span class="quick-icon gold">↑</span><span>ارفع مستندًا<small>احفظ ملفاتك في مكان آمن</small></span><b>←</b></button>
-        </article>
-      </div>
-      <article class="panel recent-panel">
-        <div class="panel-heading"><div><span class="eyebrow">آخر التحديثات</span><h3>الحركات المالية الأخيرة</h3></div><button class="text-button" data-go="finance">عرض الكل ←</button></div>
-        <div class="table-wrap"><table><thead><tr><th>الوصف</th><th>التاريخ</th><th>النوع</th><th>المبلغ</th></tr></thead><tbody id="recent-invoices"></tbody></table></div>
-      </article>
-    </section>
-    <section class="view" id="contracts">
-      <div class="section-intro"><div><span class="eyebrow">مراجعة المستندات</span><h2>تحليل العقود</h2><p>أدخل نص العقد للحصول على قائمة أولية بالبنود التي تستحق المراجعة.</p></div><span class="section-symbol indigo">▤</span></div>
-      <div class="two-column">
-        <form class="panel form-panel" id="contract-form">
-          <h3>عقد جديد</h3><label for="contract-title">اسم العقد</label><input id="contract-title" name="title" maxlength="160" required placeholder="مثال: عقد تقديم خدمات">
-          <label for="contract-text">نص العقد</label><textarea id="contract-text" name="text" rows="10" required placeholder="الصق نص العقد هنا..."></textarea>
-          <p class="form-hint">يُحفظ النص في مساحة العمل المحلية. أزل البيانات الشخصية غير الضرورية قبل الإضافة.</p>
-          <button class="primary-button" type="submit">تحليل العقد <span>←</span></button>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10271f">
+    <title>نائب | المحلل والمدقق</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main id="auth-view" class="auth-view">
+      <section class="auth-card">
+        <div class="brand-mark">ن</div>
+        <p class="eyebrow">منصة الأعمال</p>
+        <h1>نائب</h1>
+        <p class="muted">المحلل والمدقق الشامل</p>
+        <form id="auth-form" class="stack">
+          <label>اسم المستخدم<input name="username" autocomplete="username" minlength="3" required></label>
+          <label>كلمة المرور<input name="password" type="password" autocomplete="current-password" minlength="12" required></label>
+          <button class="button primary" type="submit">تسجيل الدخول</button>
         </form>
-        <article class="panel result-panel" id="contract-result"><div class="empty-state"><span>✳</span><h3>ابدأ بمراجعة عقد</h3><p>ستظهر هنا البنود المقترح التحقق منها بعد التحليل.</p></div></article>
-      </div>
-      <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">المحفوظات</span><h3>العقود السابقة</h3></div></div><div id="contracts-list" class="saved-list"></div></article>
-    </section>
-    <section class="view" id="finance">
-      <div class="section-intro"><div><span class="eyebrow">إدارة الأموال</span><h2>المحاسبة المالية</h2><p>سجّل الإيرادات والمصروفات وتابع رصيد الحركات المسجلة.</p></div><span class="section-symbol green">◈</span></div>
-      <div class="stats-grid finance-stats">
-        <article class="stat-card"><span class="stat-label">الإيرادات</span><strong id="finance-income">٠ ر.س</strong></article>
-        <article class="stat-card"><span class="stat-label">المصروفات</span><strong id="finance-expenses">٠ ر.س</strong></article>
-        <article class="stat-card"><span class="stat-label">صافي الحركات المسجلة</span><strong id="finance-balance">٠ ر.س</strong></article>
-      </div>
-      <div class="two-column">
-        <form class="panel form-panel" id="invoice-form">
-          <h3>إضافة حركة مالية</h3><label for="invoice-title">الوصف</label><input id="invoice-title" name="title" maxlength="160" required placeholder="مثال: فاتورة استشارة">
-          <label for="invoice-amount">المبلغ (ر.س)</label><input id="invoice-amount" name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00">
-          <label for="invoice-kind">نوع الحركة</label><select id="invoice-kind" name="kind"><option value="income">إيراد</option><option value="expense">مصروف</option></select>
-          <label for="invoice-date">التاريخ</label><input id="invoice-date" name="date" type="date" required>
-          <button class="primary-button" type="submit">حفظ الحركة <span>←</span></button>
-        </form>
-        <article class="panel"><div class="panel-heading"><div><span class="eyebrow">توزيع مبسط</span><h3>ملخص التدفق المالي</h3></div></div><div id="finance-chart-large" class="chart large-chart"></div></article>
-      </div>
-      <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">السجل المالي</span><h3>كل الحركات</h3></div><button class="text-button" id="print-finance">طباعة التقرير ↗</button></div><div class="table-wrap"><table><thead><tr><th>الوصف</th><th>التاريخ</th><th>النوع</th><th>المبلغ</th></tr></thead><tbody id="invoices-list"></tbody></table></div></article>
-    </section>
-    <section class="view" id="media">
-      <div class="section-intro"><div><span class="eyebrow">مكتبة الملفات</span><h2>إدارة الوسائط</h2><p>ارفع صورًا ومستندات مدعومة حتى 5 ميغابايت للملف الواحد.</p></div><span class="section-symbol gold">▧</span></div>
-      <form class="panel upload-panel" id="upload-form"><label class="dropzone" for="media-file"><span class="upload-icon">↑</span><strong>اختر ملفًا أو اسحبه إلى هنا</strong><span>PDF، PNG، JPG، WEBP أو TXT · حتى 5 ميغابايت</span><input id="media-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt" required></label><button class="primary-button" type="submit">رفع الملف <span>←</span></button></form>
-      <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">المكتبة</span><h3>الملفات المحفوظة</h3></div></div><div id="files-list" class="file-grid"></div></article>
-    </section>
-    <div id="toast" role="status" aria-live="polite"></div>
-    <footer>نائب · منصة تنظيم ومراجعة أولية · احفظ نسخة احتياطية من بياناتك بانتظام</footer>
-  </main>
-  <script src="/app.js" defer></script>
-</body>
+        <button id="setup-button" class="text-button" type="button" hidden>إعداد الحساب الأول</button>
+        <p id="auth-message" class="form-message" role="status"></p>
+      </section>
+    </main>
+
+    <div id="app-view" class="app-shell" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="#dashboard"><span class="brand-mark">ن</span><span>نائب<small>إدارة الأعمال</small></span></a>
+        <nav aria-label="القائمة الرئيسية">
+          <a href="#dashboard" data-page="dashboard" class="active"><span>⌂</span> الرئيسية</a>
+          <a href="#documents" data-page="documents"><span>▤</span> تحليل المستندات</a>
+          <a href="#accounting" data-page="accounting"><span>◈</span> المحاسبة</a>
+          <a href="#media" data-page="media"><span>▧</span> الوسائط والملفات</a>
+          <a href="#users" data-page="users" id="users-link" hidden><span>♙</span> المستخدمون</a>
+          <a href="#activity" data-page="activity"><span>◷</span> سجل العمليات</a>
+        </nav>
+        <div class="sidebar-bottom">
+          <span id="user-label" class="user-label"></span>
+          <button id="logout-button" class="logout-button" type="button">تسجيل الخروج <span>↗</span></button>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div><p class="eyebrow">مساحة العمل</p><h1 id="page-title">الرئيسية</h1></div>
+          <span class="secure-badge"><span></span> مساحة آمنة</span>
+        </header>
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+        <section class="page" id="page-dashboard">
+          <div class="welcome-panel">
+            <div><p class="eyebrow">نظرة عامة</p><h2>أهلاً بك في نائب</h2><p>أدِر مستنداتك وحساباتك وملفاتك من مكان واحد.</p></div>
+            <a class="button light" href="#documents">ابدأ بتحليل مستند <span>←</span></a>
+          </div>
+          <div class="metrics">
+            <article class="metric-card"><span>إجمالي الإيرادات</span><strong id="metric-income">—</strong><small>ريال سعودي</small></article>
+            <article class="metric-card"><span>إجمالي المصروفات</span><strong id="metric-expenses">—</strong><small>ريال سعودي</small></article>
+            <article class="metric-card"><span>الرصيد الحالي</span><strong id="metric-balance">—</strong><small>ريال سعودي</small></article>
+            <article class="metric-card"><span>المستندات المحللة</span><strong id="metric-documents">—</strong><small>مستند</small></article>
+          </div>
+          <div class="panel chart-panel"><div class="panel-heading"><div><h2>التدفق المالي</h2><p>ملخص الإيرادات والمصروفات الشهرية · SAR</p></div><span id="chart-year" class="year-label"></span></div><div id="chart" class="chart" aria-label="رسم بياني للتدفق المالي"></div></div>
+          <div class="disclaimer"><span>ⓘ</span><p>تحليل البنود آلي وأولي، ولا يُعدّ استشارة قانونية أو تأكيداً للامتثال للأنظمة السعودية. راجع محامياً مرخصاً.</p></div>
+        </section>
+
+        <section class="page" id="page-documents" hidden>
+          <div class="section-intro"><div><p class="eyebrow">مراجعة أولية</p><h2>محلل العقود والمستندات</h2><p>ألصق نص المستند لفحص وجود بنود أساسية ومؤشرات تحتاج إلى مراجعة.</p></div></div>
+          <div class="two-column">
+            <form id="document-form" class="panel stack">
+              <label>عنوان المستند<input name="title" maxlength="200" placeholder="مثال: عقد تقديم خدمات" required></label>
+              <label>نص العقد أو المستند<textarea name="content" rows="11" maxlength="1000000" placeholder="ألصق نص المستند هنا..." required></textarea></label>
+              <button class="button primary" type="submit">حلّل المستند <span>✦</span></button>
+            </form>
+            <div id="analysis-result" class="panel result-panel empty-state"><span class="empty-icon">▤</span><h3>نتيجة الفحص ستظهر هنا</h3><p>يتم فحص وجود البنود الأساسية فقط، وليس تفسيرها قانونياً.</p></div>
+          </div>
+          <div class="panel"><div class="panel-heading"><div><h2>المستندات السابقة</h2><p>سجل عمليات التحليل المحفوظة</p></div></div><div id="document-list" class="list"></div></div>
+        </section>
+
+        <section class="page" id="page-accounting" hidden>
+          <div class="section-intro"><div><p class="eyebrow">الإدارة المالية</p><h2>المحاسبة المالية</h2><p>سجّل الإيرادات والمصروفات والمشتريات وتابع ملخص السنة الحالية.</p></div><a class="button secondary" href="/api/accounting/export.csv" id="export-link">تصدير CSV / Excel</a></div>
+          <div class="metrics compact"><article class="metric-card"><span>الإيرادات</span><strong id="account-income">—</strong><small>ريال سعودي</small></article><article class="metric-card"><span>المصروفات والمشتريات</span><strong id="account-expenses">—</strong><small>ريال سعودي</small></article><article class="metric-card"><span>صافي الرصيد</span><strong id="account-balance">—</strong><small>ريال سعودي</small></article></div>
+          <form id="transaction-form" class="panel transaction-form">
+            <div class="panel-heading"><div><h2>إضافة حركة مالية</h2><p>أدخل بيانات الحركة لحفظها في السجل.</p></div></div>
+            <div class="form-grid">
+              <label>نوع الحركة<select name="kind"><option value="income">إيراد</option><option value="expense">مصروف</option><option value="purchase">مشتريات</option></select></label>
+              <label>الوصف<input name="description" maxlength="200" required placeholder="وصف الحركة"></label>
+              <label>المبلغ (ر.س)<input name="amount" type="number" min="0.01" step="0.01" required></label>
+              <label>التاريخ<input name="date" type="date" required></label>
+            </div>
+            <button class="button primary" type="submit">حفظ الحركة</button>
+          </form>
+          <div class="panel"><div class="panel-heading"><div><h2>سجل الحركات</h2><p>يمكنك البحث حسب وصف الحركة.</p></div><input id="transaction-search" class="search-input" type="search" placeholder="بحث..."></div><div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>الوصف</th><th>المبلغ</th><th></th></tr></thead><tbody id="transaction-list"></tbody></table></div></div>
+        </section>
+
+        <section class="page" id="page-media" hidden>
+          <div class="section-intro"><div><p class="eyebrow">الملفات والمرفقات</p><h2>إدارة الوسائط</h2><p>رفع الملفات وتصنيفها وتنزيلها. الحد الأقصى للملف 100 ميجابايت.</p></div></div>
+          <form id="upload-form" class="panel upload-panel">
+            <label class="file-drop"><span class="upload-icon">↑</span><strong>اختر ملفاً للرفع</strong><span>PDF، Word، Excel، JPG أو PNG · حتى 100 MB</span><input type="file" name="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" required></label>
+            <label>التصنيف<input name="category" maxlength="80" placeholder="مثال: عقود، فواتير"></label>
+            <button class="button primary" type="submit">رفع الملف</button>
+          </form>
+          <div class="panel"><div class="panel-heading"><div><h2>مكتبة الملفات</h2><p>الملفات محفوظة في مساحة خاصة وتتطلب تسجيل الدخول للوصول.</p></div></div><div id="media-list" class="media-grid"></div></div>
+        </section>
+
+        <section class="page" id="page-users" hidden>
+          <div class="section-intro"><div><p class="eyebrow">إدارة الوصول</p><h2>المستخدمون والصلاحيات</h2><p>الحساب الأول مسؤول النظام، ويمكنه إضافة مستخدمين بصلاحيات محدودة أو إدارية.</p></div></div>
+          <form id="user-form" class="panel user-form">
+            <div class="panel-heading"><div><h2>إضافة مستخدم</h2><p>استخدم كلمة مرور طويلة وفريدة.</p></div></div>
+            <div class="form-grid"><label>اسم المستخدم<input name="username" minlength="3" maxlength="40" required></label><label>كلمة المرور<input name="password" type="password" minlength="12" maxlength="128" required></label><label>الصلاحية<select name="role"><option value="staff">مستخدم</option><option value="admin">مسؤول</option></select></label></div>
+            <button class="button primary" type="submit">إضافة مستخدم</button>
+          </form>
+          <div id="user-list" class="panel list"></div>
+        </section>
+
+        <section class="page" id="page-activity" hidden>
+          <div class="section-intro"><div><p class="eyebrow">متابعة النظام</p><h2>سجل العمليات</h2><p>آخر 100 عملية محفوظة في سجل التدقيق.</p></div></div>
+          <div id="activity-list" class="panel list"></div>
+        </section>
+        <footer>نائب · إدارة أعمالك بمسؤولية <span>البيانات محفوظة على خادمك</span></footer>
+      </main>
+    </div>
+  </body>
 </html>
