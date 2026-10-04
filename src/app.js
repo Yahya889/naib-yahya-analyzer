@@ -95,7 +95,13 @@ function createApp(options = {}) {
 
   const app = express();
   app.disable('x-powered-by');
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        imgSrc: ["'self'", 'data:', 'blob:']
+      }
+    }
+  }));
   app.use(express.json({ limit: '2mb' }));
   app.use('/api', rateLimit({
     windowMs: 60 * 1000,
