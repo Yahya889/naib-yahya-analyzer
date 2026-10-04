@@ -32,6 +32,7 @@ test('authenticates users and provides protected document, accounting, and media
 
   const status = await request('/api/auth/status');
   assert.deepEqual(await status.json(), { configured: false });
+  assert.match(status.headers.get('content-security-policy'), /img-src 'self' data: blob:;/);
   assert.equal((await request('/api/documents')).status, 401);
 
   const registration = await request('/api/auth/register', json('POST', {
