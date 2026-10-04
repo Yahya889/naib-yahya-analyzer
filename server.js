@@ -6,7 +6,9 @@ const crypto = require("node:crypto");
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const MAX_JSON_SIZE = 1024 * 1024;
-const MAX_UPLOAD_SIZE = 5 * 1024 * 1024;
+const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
+const MAX_BACKUPS = 5;
+const ENCRYPTED_PREFIX = Buffer.from("NAIB1");
 const ALLOWED_FILES = new Map([
   [".pdf", "application/pdf"],
   [".png", "image/png"],
@@ -33,10 +35,14 @@ function analyzeContract(text) {
   const findings = checks
     .filter(([, pattern]) => !pattern.test(text))
     .map(([name]) => ({ severity: "review", message: `تحقق من تضمين بند واضح حول: ${name}.` }));
+  const checkedCount = checks.length - findings.length;
 
   return {
     findings,
     riskCount: findings.length,
+    score: Math.round((checkedCount / checks.length) * 100),
+    checkedCount,
+    totalChecks: checks.length,
     disclaimer: "فحص أولي آلي لقائمة بنود عامة، وليس رأيًا قانونيًا أو تأكيدًا للامتثال للأنظمة السعودية. راجع العقد مع محامٍ مرخص."
   };
 }
@@ -95,6 +101,7 @@ function parseMultipart(buffer, contentType) {
   const marker = Buffer.from(`--${boundary}`);
   let position = 0;
   let file;
+  const fields = {};
   while ((position = buffer.indexOf(marker, position)) !== -1) {
     position += marker.length;
     if (buffer[position] === 45 && buffer[position + 1] === 45) break;
@@ -104,14 +111,17 @@ function parseMultipart(buffer, contentType) {
     const headers = buffer.toString("utf8", position, headerEnd);
     const nextMarker = buffer.indexOf(Buffer.concat([Buffer.from("\r\n"), marker]), headerEnd + 4);
     if (nextMarker === -1) break;
-    const disposition = /content-disposition:\s*form-data;[^\r\n]*filename="([^"]*)"/i.exec(headers);
-    if (disposition) {
+    const disposition = /content-disposition:\s*form-data;[^\r\n]*name="([^"]+)"/i.exec(headers);
+    const filename = /filename="([^"]*)"/i.exec(headers);
+    const data = buffer.subarray(headerEnd + 4, nextMarker);
+    if (disposition && filename) {
       file = {
-        name: path.basename(disposition[1].replace(/\\/g, "/")),
+        name: path.basename(filename[1].replace(/\\/g, "/")),
         type: /content-type:\s*([^\r\n]+)/i.exec(headers)?.[1].trim().toLowerCase() || "application/octet-stream",
-        data: buffer.subarray(headerEnd + 4, nextMarker)
+        data
       };
-      break;
+    } else if (disposition) {
+      fields[disposition[1]] = data.toString("utf8");
     }
     position = nextMarker + 2;
   }
@@ -120,14 +130,14 @@ function parseMultipart(buffer, contentType) {
     error.status = 400;
     throw error;
   }
-  return file;
+  return { ...file, fields };
 }
 
 function validateFile(file) {
   const extension = path.extname(file.name).toLowerCase();
   const expectedType = ALLOWED_FILES.get(extension);
   if (!expectedType || file.type !== expectedType || file.data.length === 0 || file.data.length > MAX_UPLOAD_SIZE) {
-    const error = new Error("نوع الملف غير مدعوم أو حجمه يتجاوز 5 ميغابايت.");
+    const error = new Error("نوع الملف غير مدعوم أو حجمه يتجاوز 25 ميغابايت.");
     error.status = 400;
     throw error;
   }
@@ -145,13 +155,64 @@ function validateFile(file) {
   return { extension, mimeType: expectedType };
 }
 
-function createServer({ dataDir = path.join(ROOT, "data"), uploadDir = path.join(dataDir, "uploads") } = {}) {
+function createServer({
+  dataDir = path.join(ROOT, "data"),
+  uploadDir = path.join(dataDir, "uploads"),
+  encryptionKey = process.env.NAIB_ENCRYPTION_KEY
+} = {}) {
   const databasePath = path.join(dataDir, "database.json");
+  const backupDir = path.join(dataDir, "backups");
+  const key = encryptionKey ? Buffer.from(encryptionKey, "hex") : null;
+  if (encryptionKey && (!/^[\da-f]{64}$/i.test(encryptionKey) || key.length !== 32)) {
+    throw new Error("NAIB_ENCRYPTION_KEY must contain exactly 64 hexadecimal characters.");
+  }
   let databaseQueue = Promise.resolve();
+
+  function encrypt(data) {
+    if (!key) return data;
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
+    return Buffer.concat([ENCRYPTED_PREFIX, iv, cipher.getAuthTag(), encrypted]);
+  }
+
+  function decrypt(data) {
+    if (!data.subarray(0, ENCRYPTED_PREFIX.length).equals(ENCRYPTED_PREFIX)) return data;
+    if (!key || data.length < ENCRYPTED_PREFIX.length + 28) {
+      throw new Error("Encrypted workspace data requires the correct NAIB_ENCRYPTION_KEY.");
+    }
+    const offset = ENCRYPTED_PREFIX.length;
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, data.subarray(offset, offset + 12));
+    decipher.setAuthTag(data.subarray(offset + 12, offset + 28));
+    return Buffer.concat([decipher.update(data.subarray(offset + 28)), decipher.final()]);
+  }
+
+  async function readStoredFile(filePath) {
+    const stored = await fs.readFile(filePath);
+    const content = decrypt(stored);
+    if (key && !stored.subarray(0, ENCRYPTED_PREFIX.length).equals(ENCRYPTED_PREFIX)) {
+      const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+      await fs.writeFile(tempPath, encrypt(content), { mode: 0o600 });
+      await fs.rename(tempPath, filePath);
+    }
+    return content;
+  }
+
+  function recordAudit(database, action, entity, id) {
+    database.auditLog ||= [];
+    database.auditLog.unshift({ id: crypto.randomUUID(), action, entity, entityId: id, createdAt: new Date().toISOString() });
+    database.auditLog = database.auditLog.slice(0, 500);
+  }
 
   async function loadDatabase() {
     try {
-      return JSON.parse(await fs.readFile(databasePath, "utf8"));
+      const content = await readStoredFile(databasePath);
+      const database = JSON.parse(content.toString("utf8"));
+      database.auditLog ||= [];
+      database.files ||= [];
+      database.invoices ||= [];
+      database.contracts ||= [];
+      return database;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       return { contracts: [], invoices: [], files: [] };
@@ -164,8 +225,21 @@ function createServer({ dataDir = path.join(ROOT, "data"), uploadDir = path.join
       const database = await loadDatabase();
       result = await update(database);
       await fs.mkdir(dataDir, { recursive: true });
+      try {
+        const previous = await fs.readFile(databasePath);
+        await fs.mkdir(backupDir, { recursive: true });
+        const backupPath = path.join(backupDir, `database-${Date.now()}-${crypto.randomUUID()}.json`);
+        const backup = key && !previous.subarray(0, ENCRYPTED_PREFIX.length).equals(ENCRYPTED_PREFIX)
+          ? encrypt(previous)
+          : previous;
+        await fs.writeFile(backupPath, backup, { flag: "wx", mode: 0o600 });
+        const backups = (await fs.readdir(backupDir)).filter(name => /^database-.*\.json$/.test(name)).sort().reverse();
+        await Promise.all(backups.slice(MAX_BACKUPS).map(name => fs.rm(path.join(backupDir, name), { force: true })));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
       const tempPath = `${databasePath}.${crypto.randomUUID()}.tmp`;
-      await fs.writeFile(tempPath, JSON.stringify(database, null, 2), { mode: 0o600 });
+      await fs.writeFile(tempPath, encrypt(Buffer.from(JSON.stringify(database, null, 2))), { mode: 0o600 });
       await fs.rename(tempPath, databasePath);
     });
     databaseQueue = operation.catch(() => {});
@@ -188,6 +262,11 @@ function createServer({ dataDir = path.join(ROOT, "data"), uploadDir = path.join
       });
     }
 
+    if (request.method === "GET" && url.pathname === "/api/audit-log") {
+      const database = await loadDatabase();
+      return sendJson(response, 200, database.auditLog.slice(0, 100));
+    }
+
     if (request.method === "GET" && ["/api/contracts", "/api/invoices", "/api/files"].includes(url.pathname)) {
       const database = await loadDatabase();
       const key = url.pathname.slice("/api/".length);
@@ -203,7 +282,10 @@ function createServer({ dataDir = path.join(ROOT, "data"), uploadDir = path.join
         createdAt: new Date().toISOString(),
         analysis: analyzeContract(body.text)
       };
-      await updateDatabase(database => database.contracts.unshift(contract));
+      await updateDatabase(database => {
+        database.contracts.unshift(contract);
+        recordAudit(database, "create", "contract", contract.id);
+      });
       return sendJson(response, 201, contract);
     }
 
@@ -235,7 +317,10 @@ function createServer({ dataDir = path.join(ROOT, "data"), uploadDir = path.join
         error.status = 400;
         throw error;
       }
-      await updateDatabase(database => database.invoices.unshift(invoice));
+      await updateDatabase(database => {
+        database.invoices.unshift(invoice);
+        recordAudit(database, "create", "invoice", invoice.id);
+      });
       return sendJson(response, 201, invoice);
     }
 
@@ -246,19 +331,24 @@ function createServer({ dataDir = path.join(ROOT, "data"), uploadDir = path.join
         error.status = 400;
         throw error;
       }
-      const file = parseMultipart(await readBody(request, MAX_UPLOAD_SIZE + 64 * 1024), contentType);
+      const file = parseMultipart(await readBody(request, MAX_UPLOAD_SIZE + 128 * 1024), contentType);
       const { extension, mimeType } = validateFile(file);
+      const category = file.fields.category;
       const id = crypto.randomUUID();
       await fs.mkdir(uploadDir, { recursive: true });
-      await fs.writeFile(path.join(uploadDir, `${id}${extension}`), file.data, { flag: "wx", mode: 0o600 });
+      await fs.writeFile(path.join(uploadDir, `${id}${extension}`), encrypt(file.data), { flag: "wx", mode: 0o600 });
       const entry = {
         id,
         name: file.name.slice(0, 200),
         type: mimeType,
+        category: ["عقود", "فواتير", "هوية", "عام"].includes(category) ? category : "عام",
         size: file.data.length,
         createdAt: new Date().toISOString()
       };
-      await updateDatabase(database => database.files.unshift(entry));
+      await updateDatabase(database => {
+        database.files.unshift(entry);
+        recordAudit(database, "upload", "file", entry.id);
+      });
       return sendJson(response, 201, entry);
     }
 
@@ -269,7 +359,7 @@ function createServer({ dataDir = path.join(ROOT, "data"), uploadDir = path.join
       if (!entry) return sendJson(response, 404, { error: "الملف غير موجود." });
       const extension = path.extname(entry.name).toLowerCase();
       const storedPath = path.join(uploadDir, `${entry.id}${extension}`);
-      const content = await fs.readFile(storedPath);
+      const content = await readStoredFile(storedPath);
       response.writeHead(200, {
         "Content-Type": entry.type,
         "Content-Length": content.length,
@@ -288,6 +378,7 @@ function createServer({ dataDir = path.join(ROOT, "data"), uploadDir = path.join
         if (!entry) return;
         database.files = database.files.filter(file => file.id !== entry.id);
         deleted = entry;
+        recordAudit(database, "delete", "file", entry.id);
       });
       if (!deleted) return sendJson(response, 404, { error: "الملف غير موجود." });
       const entry = deleted;

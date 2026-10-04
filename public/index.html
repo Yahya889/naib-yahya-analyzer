@@ -51,6 +51,7 @@
         <div class="panel-heading"><div><span class="eyebrow">آخر التحديثات</span><h3>الحركات المالية الأخيرة</h3></div><button class="text-button" data-go="finance">عرض الكل ←</button></div>
         <div class="table-wrap"><table><thead><tr><th>الوصف</th><th>التاريخ</th><th>النوع</th><th>المبلغ</th></tr></thead><tbody id="recent-invoices"></tbody></table></div>
       </article>
+      <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">الأمان والشفافية</span><h3>سجل العمليات الأخير</h3></div></div><div class="table-wrap"><table><thead><tr><th>العملية</th><th>النوع</th><th>المعرف</th><th>التاريخ</th></tr></thead><tbody id="audit-list"></tbody></table></div></article>
     </section>
     <section class="view" id="contracts">
       <div class="section-intro"><div><span class="eyebrow">مراجعة المستندات</span><h2>تحليل العقود</h2><p>أدخل نص العقد للحصول على قائمة أولية بالبنود التي تستحق المراجعة.</p></div><span class="section-symbol indigo">▤</span></div>
@@ -61,7 +62,7 @@
           <p class="form-hint">يُحفظ النص في مساحة العمل المحلية. أزل البيانات الشخصية غير الضرورية قبل الإضافة.</p>
           <button class="primary-button" type="submit">تحليل العقد <span>←</span></button>
         </form>
-        <article class="panel result-panel" id="contract-result"><div class="empty-state"><span>✳</span><h3>ابدأ بمراجعة عقد</h3><p>ستظهر هنا البنود المقترح التحقق منها بعد التحليل.</p></div></article>
+        <article class="panel result-panel" id="contract-result"><div class="empty-state"><span>✳</span><h3>ابدأ بمراجعة عقد</h3><p>ستظهر هنا نسبة اكتمال البنود وقائمة التحقق بعد التحليل.</p></div></article>
       </div>
       <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">المحفوظات</span><h3>العقود السابقة</h3></div></div><div id="contracts-list" class="saved-list"></div></article>
     </section>
@@ -82,12 +83,17 @@
         </form>
         <article class="panel"><div class="panel-heading"><div><span class="eyebrow">توزيع مبسط</span><h3>ملخص التدفق المالي</h3></div></div><div id="finance-chart-large" class="chart large-chart"></div></article>
       </div>
-      <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">السجل المالي</span><h3>كل الحركات</h3></div><button class="text-button" id="print-finance">طباعة التقرير ↗</button></div><div class="table-wrap"><table><thead><tr><th>الوصف</th><th>التاريخ</th><th>النوع</th><th>المبلغ</th></tr></thead><tbody id="invoices-list"></tbody></table></div></article>
+      <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">السجل المالي</span><h3>الحركات المالية</h3></div><div class="export-actions"><button class="text-button" id="export-finance">تصدير Excel/CSV ↓</button><button class="text-button" id="print-finance">طباعة / PDF ↗</button></div></div><div class="filter-bar">
+        <input id="invoice-search" type="search" placeholder="بحث في الوصف" aria-label="بحث في الحركات المالية">
+        <select id="invoice-kind-filter" aria-label="تصفية حسب النوع"><option value="all">كل الأنواع</option><option value="income">إيرادات</option><option value="expense">مصروفات</option></select>
+        <select id="invoice-period" aria-label="الفترة"><option value="all">كل الفترات</option><option value="month">هذا الشهر</option><option value="year">هذه السنة</option></select>
+        <label>من <input id="invoice-from" type="date" aria-label="من تاريخ"></label><label>إلى <input id="invoice-to" type="date" aria-label="إلى تاريخ"></label>
+      </div><div class="table-wrap"><table><thead><tr><th>الوصف</th><th>التاريخ</th><th>النوع</th><th>المبلغ</th></tr></thead><tbody id="invoices-list"></tbody></table></div><p id="finance-filter-summary" class="filter-summary" aria-live="polite"></p></article>
     </section>
     <section class="view" id="media">
-      <div class="section-intro"><div><span class="eyebrow">مكتبة الملفات</span><h2>إدارة الوسائط</h2><p>ارفع صورًا ومستندات مدعومة حتى 5 ميغابايت للملف الواحد.</p></div><span class="section-symbol gold">▧</span></div>
-      <form class="panel upload-panel" id="upload-form"><label class="dropzone" for="media-file"><span class="upload-icon">↑</span><strong>اختر ملفًا أو اسحبه إلى هنا</strong><span>PDF، PNG، JPG، WEBP أو TXT · حتى 5 ميغابايت</span><input id="media-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt" required></label><button class="primary-button" type="submit">رفع الملف <span>←</span></button></form>
-      <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">المكتبة</span><h3>الملفات المحفوظة</h3></div></div><div id="files-list" class="file-grid"></div></article>
+      <div class="section-intro"><div><span class="eyebrow">مكتبة الملفات</span><h2>إدارة الوسائط</h2><p>ارفع صورًا ومستندات مدعومة حتى 25 ميغابايت للملف الواحد.</p></div><span class="section-symbol gold">▧</span></div>
+      <form class="panel upload-panel" id="upload-form"><label class="dropzone" for="media-file"><span class="upload-icon">↑</span><strong>اختر ملفًا أو اسحبه إلى هنا</strong><span>PDF، PNG، JPG، WEBP أو TXT · حتى 25 ميغابايت</span><input id="media-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt" required></label><div class="upload-options"><label for="media-category">الفئة</label><select id="media-category" name="category"><option>عام</option><option>عقود</option><option>فواتير</option><option>هوية</option></select><button class="primary-button" type="submit">رفع الملف <span>←</span></button></div><div id="media-preview" class="media-preview" aria-live="polite"></div></form>
+      <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">المكتبة</span><h3>الملفات المحفوظة</h3></div><select id="media-category-filter" aria-label="تصفية الملفات حسب الفئة"><option value="all">كل الفئات</option><option>عام</option><option>عقود</option><option>فواتير</option><option>هوية</option></select></div><div id="files-list" class="file-grid"></div></article>
     </section>
     <div id="toast" role="status" aria-live="polite"></div>
     <footer>نائب · منصة تنظيم ومراجعة أولية · احفظ نسخة احتياطية من بياناتك بانتظام</footer>
