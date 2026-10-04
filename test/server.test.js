@@ -37,6 +37,7 @@ test("dashboard serves its Arabic RTL home page and rejects unknown static paths
   assert.equal(home.headers.get("x-content-type-options"), "nosniff");
   assert.match(await home.text(), /lang="ar" dir="rtl"/);
   assert.equal((await fetch(`${base}/server.js`)).status, 404);
+  assert.deepEqual(await (await fetch(`${base}/api/audit-log`)).json(), []);
 });
 
 test("contract and finance APIs persist records and calculate summary totals", async t => {

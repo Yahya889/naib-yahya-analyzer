@@ -54,18 +54,23 @@ function filteredInvoices() {
   const query = document.getElementById("invoice-search").value.trim().toLocaleLowerCase("ar");
   const kind = document.getElementById("invoice-kind-filter").value;
   const period = document.getElementById("invoice-period").value;
+  const sort = document.getElementById("invoice-sort").value;
   const from = document.getElementById("invoice-from").value;
   const to = document.getElementById("invoice-to").value;
   const now = new Date();
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const year = String(now.getFullYear());
-  return invoices.filter(invoice => {
+  const visible = invoices.filter(invoice => {
     const date = invoice.date || invoice.createdAt.slice(0, 10);
     return (kind === "all" || invoice.kind === kind) &&
       (!query || invoice.title.toLocaleLowerCase("ar").includes(query)) &&
       (period === "all" || (period === "month" ? date.startsWith(month) : date.startsWith(year))) &&
       (!from || date >= from) && (!to || date <= to);
   });
+  if (sort === "oldest") return visible.reverse();
+  if (sort === "amount-desc") return visible.sort((left, right) => right.amount - left.amount);
+  if (sort === "amount-asc") return visible.sort((left, right) => left.amount - right.amount);
+  return visible;
 }
 
 function updateFinanceView() {
@@ -218,7 +223,7 @@ document.getElementById("media-file").addEventListener("change", event => {
   }
 });
 document.getElementById("media-category-filter").addEventListener("change", renderFiles);
-["invoice-search", "invoice-kind-filter", "invoice-period", "invoice-from", "invoice-to"].forEach(id =>
+["invoice-search", "invoice-kind-filter", "invoice-period", "invoice-sort", "invoice-from", "invoice-to"].forEach(id =>
   document.getElementById(id).addEventListener("input", updateFinanceView)
 );
 document.getElementById("export-finance").addEventListener("click", () => {

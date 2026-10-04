@@ -167,6 +167,7 @@ function createServer({
     throw new Error("NAIB_ENCRYPTION_KEY must contain exactly 64 hexadecimal characters.");
   }
   let databaseQueue = Promise.resolve();
+  let backupMigration;
 
   function encrypt(data) {
     if (!key) return data;
@@ -198,6 +199,22 @@ function createServer({
     return content;
   }
 
+  async function migrateBackups() {
+    if (!key) return;
+    backupMigration ||= (async () => {
+      let names;
+      try {
+        names = await fs.readdir(backupDir);
+      } catch (error) {
+        if (error.code === "ENOENT") return;
+        throw error;
+      }
+      await Promise.all(names.filter(name => /^database-.*\.json$/.test(name))
+        .map(name => readStoredFile(path.join(backupDir, name))));
+    })();
+    await backupMigration;
+  }
+
   function recordAudit(database, action, entity, id) {
     database.auditLog ||= [];
     database.auditLog.unshift({ id: crypto.randomUUID(), action, entity, entityId: id, createdAt: new Date().toISOString() });
@@ -212,10 +229,11 @@ function createServer({
       database.files ||= [];
       database.invoices ||= [];
       database.contracts ||= [];
+      await migrateBackups();
       return database;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
-      return { contracts: [], invoices: [], files: [] };
+      return { contracts: [], invoices: [], files: [], auditLog: [] };
     }
   }
 

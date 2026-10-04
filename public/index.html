@@ -87,6 +87,7 @@
         <input id="invoice-search" type="search" placeholder="بحث في الوصف" aria-label="بحث في الحركات المالية">
         <select id="invoice-kind-filter" aria-label="تصفية حسب النوع"><option value="all">كل الأنواع</option><option value="income">إيرادات</option><option value="expense">مصروفات</option></select>
         <select id="invoice-period" aria-label="الفترة"><option value="all">كل الفترات</option><option value="month">هذا الشهر</option><option value="year">هذه السنة</option></select>
+        <select id="invoice-sort" aria-label="ترتيب الحركات"><option value="newest">الأحدث أولًا</option><option value="oldest">الأقدم أولًا</option><option value="amount-desc">المبلغ الأعلى</option><option value="amount-asc">المبلغ الأقل</option></select>
         <label>من <input id="invoice-from" type="date" aria-label="من تاريخ"></label><label>إلى <input id="invoice-to" type="date" aria-label="إلى تاريخ"></label>
       </div><div class="table-wrap"><table><thead><tr><th>الوصف</th><th>التاريخ</th><th>النوع</th><th>المبلغ</th></tr></thead><tbody id="invoices-list"></tbody></table></div><p id="finance-filter-summary" class="filter-summary" aria-live="polite"></p></article>
     </section>
