@@ -162,6 +162,60 @@ test('trusted proxy client IPs have independent login limits', async (t) => {
   assert.equal(otherClient.status, 200);
 });
 
+test('sorting supports finance ordering and empty audit logs are returned as an empty array', async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'naib-sort-'));
+  const app = createApp({
+    databasePath: path.join(dataDir, 'test.sqlite'),
+    storagePath: path.join(dataDir, 'uploads'),
+    tokenSecret: 'test-only-token-secret-long-enough'
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    app.locals.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = (token) => ({ Authorization: ['Bearer', token].join(' ') });
+  const json = (method, body, token) => ({
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? authHeaders(token) : {}) },
+    body: JSON.stringify(body)
+  });
+
+  const admin = await (await fetch(`${base}/api/auth/register`, json('POST', {
+    username: 'owner',
+    password: 'very-long-test-password'
+  }))).json();
+
+  for (const [kind, description, amount, date] of [
+    ['expense', 'Rent', 120, '2026-10-01'],
+    ['income', 'Customer payment', 300, '2026-10-02'],
+    ['purchase', 'Office supplies', 90, '2026-10-03']
+  ]) {
+    const response = await fetch(`${base}/api/accounting/transactions`, json('POST', {
+      kind, description, amount, date
+    }, admin.token));
+    assert.equal(response.status, 201);
+  }
+
+  const descending = await (await fetch(`${base}/api/accounting/transactions?sort=amount_desc`, {
+    headers: authHeaders(admin.token)
+  })).json();
+  assert.deepEqual(descending.map((row) => row.amount), [300, 120, 90]);
+
+  const ascending = await (await fetch(`${base}/api/accounting/transactions?sort=amount_asc`, {
+    headers: authHeaders(admin.token)
+  })).json();
+  assert.deepEqual(ascending.map((row) => row.amount), [90, 120, 300]);
+
+  app.locals.db.prepare('DELETE FROM audit_log').run();
+  const audit = await (await fetch(`${base}/api/audit`, { headers: authHeaders(admin.token) })).json();
+  assert.deepEqual(audit, []);
+});
+
 test('daily backups retry media independently when its first copy fails', async (t) => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'naib-backup-'));
   const storagePath = path.join(dataDir, 'uploads');
