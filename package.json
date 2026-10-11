@@ -2,12 +2,21 @@
   "name": "naib-yahya-analyzer",
   "version": "1.0.0",
   "private": true,
-  "description": "Arabic contract review, bookkeeping, and media dashboard",
+  "description": "Arabic contract analysis, accounting, and media management dashboard",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
     "test": "node --test"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "express": "5.2.1",
+    "express-rate-limit": "8.7.0",
+    "helmet": "8.3.0",
+    "multer": "2.4.0"
   }
 }
