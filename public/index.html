@@ -90,7 +90,7 @@
             </div>
             <button class="button primary" type="submit">حفظ الحركة</button>
           </form>
-          <div class="panel"><div class="panel-heading"><div><h2>سجل الحركات</h2><p>يمكنك البحث حسب وصف الحركة.</p></div><input id="transaction-search" class="search-input" type="search" placeholder="بحث..."></div><div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>الوصف</th><th>المبلغ</th><th></th></tr></thead><tbody id="transaction-list"></tbody></table></div></div>
+          <div class="panel"><div class="panel-heading"><div><h2>سجل الحركات</h2><p>يمكنك البحث حسب وصف الحركة.</p></div><div class="panel-tools"><input id="transaction-search" class="search-input" type="search" placeholder="بحث..."><select id="transaction-sort" aria-label="ترتيب الحركات"><option value="date_desc">الأحدث أولاً</option><option value="date_asc">الأقدم أولاً</option><option value="amount_desc">المبلغ: الأعلى أولاً</option><option value="amount_asc">المبلغ: الأقل أولاً</option></select></div></div><div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>الوصف</th><th>المبلغ</th><th></th></tr></thead><tbody id="transaction-list"></tbody></table></div></div>
         </section>
 
         <section class="page" id="page-media" hidden>

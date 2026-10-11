@@ -276,15 +276,21 @@ function createApp(options = {}) {
   });
 
   app.get('/api/accounting/transactions', requireAuth, (req, res) => {
-    const { kind, search } = req.query;
+    const { kind, search, sort = 'date_desc' } = req.query;
     if (kind && !['income', 'expense', 'purchase'].includes(kind)) {
       return res.status(400).json({ error: 'نوع الحركة غير صالح.' });
     }
+    const orderBy = {
+      date_desc: 'transaction_date DESC, id DESC',
+      date_asc: 'transaction_date ASC, id ASC',
+      amount_desc: 'amount DESC, transaction_date DESC, id DESC',
+      amount_asc: 'amount ASC, transaction_date ASC, id ASC'
+    }[String(sort)] || 'transaction_date DESC, id DESC';
     const transactions = db.prepare(`
       SELECT * FROM transactions
       WHERE (? = '' OR kind = ?)
         AND (? = '' OR description LIKE ?)
-      ORDER BY transaction_date DESC, id DESC
+      ORDER BY ${orderBy}
     `).all(kind || '', kind || '', search || '', `%${search || ''}%`);
     res.json(transactions);
   });

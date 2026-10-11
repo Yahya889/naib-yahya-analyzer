@@ -307,6 +307,7 @@ document.querySelector('#transaction-form').addEventListener('submit', async (ev
 });
 
 document.querySelector('#transaction-search').addEventListener('input', loadTransactions);
+document.querySelector('#transaction-sort').addEventListener('change', loadTransactions);
 
 async function loadAccounting() {
   const summary = await api('/api/accounting/summary');
@@ -318,7 +319,8 @@ async function loadAccounting() {
 
 async function loadTransactions() {
   const search = document.querySelector('#transaction-search').value;
-  const transactions = await api(`/api/accounting/transactions?search=${encodeURIComponent(search)}`);
+  const sort = document.querySelector('#transaction-sort').value;
+  const transactions = await api(`/api/accounting/transactions?search=${encodeURIComponent(search)}&sort=${encodeURIComponent(sort)}`);
   const body = document.querySelector('#transaction-list');
   body.replaceChildren();
   if (!transactions.length) {
