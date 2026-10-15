@@ -103,7 +103,20 @@ function createApp(options = {}) {
     if (!proxies.length) throw new Error('TRUST_PROXY must list the trusted proxy IPs or CIDRs.');
     app.set('trust proxy', proxies);
   }
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"]
+      }
+    }
+  }));
   app.use(express.json({ limit: '2mb' }));
   app.use('/api', rateLimit({
     windowMs: 60 * 1000,
