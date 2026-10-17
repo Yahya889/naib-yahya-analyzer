@@ -16,6 +16,7 @@ const setupButton = document.querySelector('#setup-button');
 let registering = false;
 let currentUser;
 let toastTimeout;
+let transactionRequestId = 0;
 
 async function api(url, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -318,9 +319,11 @@ async function loadAccounting() {
 }
 
 async function loadTransactions() {
+  const requestId = ++transactionRequestId;
   const search = document.querySelector('#transaction-search').value;
   const sort = document.querySelector('#transaction-sort').value;
   const transactions = await api(`/api/accounting/transactions?search=${encodeURIComponent(search)}&sort=${encodeURIComponent(sort)}`);
+  if (requestId !== transactionRequestId) return;
   const body = document.querySelector('#transaction-list');
   body.replaceChildren();
   if (!transactions.length) {
