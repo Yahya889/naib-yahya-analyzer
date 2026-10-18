@@ -1,6 +1,11 @@
 const tokenKey = 'naib-session';
 const labels = { income: 'إيراد', expense: 'مصروف', purchase: 'مشتريات', admin: 'مسؤول', staff: 'مستخدم' };
-const permitStatusLabels = { active: 'ساري', expiring: 'ينتهي خلال 30 يوماً', expired: 'منتهي' };
+const permitStatusLabels = {
+  active: 'ساري',
+  upcoming: 'لم يبدأ بعد',
+  expiring: 'ينتهي خلال 30 يوماً',
+  expired: 'منتهي'
+};
 const pages = {
   dashboard: 'الرئيسية',
   security: 'أمن الموقع',
@@ -180,13 +185,79 @@ document.querySelector('#permit-form').addEventListener('submit', async (event) 
   finally { button.disabled = false; }
 });
 
+document.querySelector('#report-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/security/reports', { method: 'POST', body: new FormData(form) });
+    form.reset();
+    await loadReports();
+    showToast('تم حفظ التقرير وصورته.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
 document.querySelector('#permit-search').addEventListener('input', loadPermits);
+
+document.querySelector('#vehicle-lookup-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const plate = event.currentTarget.elements.plate.value.trim();
+  const result = document.querySelector('#vehicle-lookup-result');
+  result.replaceChildren();
+  try {
+    const vehicle = await api(`/api/security/vehicles?plate=${encodeURIComponent(plate)}`);
+    renderVehicleLookup(vehicle);
+  } catch (error) { showToast(error.message); }
+});
+
+function renderVehicleLookup(vehicle) {
+  const result = document.querySelector('#vehicle-lookup-result');
+  result.replaceChildren();
+  if (!vehicle.vehicle_code) return appendEmpty(result, 'لم يتم العثور على مركبة مسجلة بهذا الرقم.');
+  const heading = document.createElement('div');
+  heading.className = 'vehicle-lookup-heading';
+  heading.append(
+    textElement('strong', `المركبة ${vehicle.plate}`),
+    textElement('span', `الرمز الثابت: ${vehicle.vehicle_code}`)
+  );
+  result.append(heading);
+  if (vehicle.permits.length) {
+    result.append(textElement('h3', 'التصاريح'));
+    vehicle.permits.forEach((permit) => {
+      const card = document.createElement('article');
+      card.className = 'vehicle-lookup-card';
+      card.append(
+        textElement('strong', `${permit.permit_number} · ${permitStatusLabels[permit.status]}`),
+        textElement('span', `السائق: ${permit.driver_name} · الهوية: ${permit.identity_number} · الهاتف: ${permit.phone}`),
+        textElement('span', `الجهة: ${permit.organization || '—'} · الغرض: ${permit.purpose}`),
+        textElement('span', `الصلاحية: ${permit.valid_from} إلى ${permit.valid_until}`)
+      );
+      result.append(card);
+    });
+  }
+  if (vehicle.access.length) {
+    result.append(textElement('h3', 'سجل الدخول'));
+    vehicle.access.forEach((visit) => {
+      const card = document.createElement('article');
+      card.className = 'vehicle-lookup-card';
+      card.append(
+        textElement('strong', `البوابة ${visit.gate} · ${visit.person_count} أشخاص`),
+        textElement('span', `الأشخاص: ${visit.members.map((member) => `${member.name} (${member.identity_number})`).join('، ')}`),
+        textElement('span', `الغرض: ${visit.purpose} · الدخول: ${formatTimestamp(visit.entered_at)} · الخروج: ${visit.exited_at ? formatTimestamp(visit.exited_at) : 'داخل الموقع'}`)
+      );
+      result.append(card);
+    });
+  }
+}
 
 async function loadSecurity() {
   const [summary] = await Promise.all([
     api('/api/security/summary'),
     loadAccessRecords(),
-    loadPermits()
+    loadPermits(),
+    loadReports()
   ]);
   document.querySelector('#security-inside-count').textContent = formatMoney(summary.people_inside);
   document.querySelector('#security-active-visits').textContent = formatMoney(summary.active_visits);
@@ -216,7 +287,10 @@ async function loadAccessRecords() {
     const count = document.createElement('td');
     count.textContent = formatMoney(record.person_count);
     const gate = document.createElement('td');
-    gate.append(textElement('span', record.gate), textElement('small', record.vehicle_plate || '—'));
+    gate.append(
+      textElement('span', record.gate),
+      textElement('small', record.vehicle_plate ? `${record.vehicle_plate} · ${record.vehicle_code || ''}` : '—')
+    );
     const entered = document.createElement('td');
     entered.textContent = formatTimestamp(record.entered_at);
     const exited = document.createElement('td');
@@ -321,7 +395,12 @@ async function loadPermits() {
     api(`/api/media/${permit.media_id}/preview`)
       .then((blob) => { photo.src = URL.createObjectURL(blob); })
       .catch(() => { photo.alt = 'تعذرت معاينة الصورة'; });
-    permitDetails.append(photo, textElement('strong', permit.permit_number));
+    const permitNumber = document.createElement('div');
+    permitNumber.append(
+      textElement('strong', permit.permit_number),
+      textElement('small', `رمز المركبة ${permit.vehicle_code || '—'}`)
+    );
+    permitDetails.append(photo, permitNumber);
     permitCell.append(permitDetails);
     const driver = document.createElement('td');
     driver.append(textElement('span', permit.driver_name), textElement('small', permit.organization || '—'));
@@ -337,6 +416,31 @@ async function loadPermits() {
     status.append(badge);
     row.append(permitCell, textElement('td', permit.vehicle_plate), driver, contact, details, validity, status);
     body.append(row);
+  });
+}
+
+async function loadReports() {
+  const reports = await api('/api/security/reports');
+  const list = document.querySelector('#report-list');
+  list.replaceChildren();
+  if (!reports.length) return appendEmpty(list, 'لا توجد تقارير أمنية محفوظة بعد.');
+  reports.forEach((report) => {
+    const card = document.createElement('article');
+    card.className = 'report-card';
+    const photo = document.createElement('img');
+    photo.className = 'report-photo';
+    photo.alt = `صورة التقرير ${report.title}`;
+    api(`/api/media/${report.media_id}/preview`)
+      .then((blob) => { photo.src = URL.createObjectURL(blob); })
+      .catch(() => { photo.alt = 'تعذرت معاينة صورة التقرير'; });
+    const info = document.createElement('div');
+    info.append(
+      textElement('strong', report.title),
+      textElement('small', `${report.category} · ${report.location || 'الموقع غير محدد'} · ${formatTimestamp(report.created_at)}`),
+      textElement('p', report.details)
+    );
+    card.append(photo, info);
+    list.append(card);
   });
 }
 

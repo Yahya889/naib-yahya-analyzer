@@ -148,6 +148,19 @@ td { color: #384740; }
 .security-filters { display: flex; align-items: center; gap: 8px; }
 .security-filters select { width: auto; padding: 9px 10px; font-size: 11px; }
 .permit-photo-field input { padding: 8px; font-size: 10px; }
+.report-details-field { margin-top: 12px; }
+.report-list { display: grid; gap: 10px; }
+.report-card { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 13px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; }
+.report-photo { width: 130px; height: 95px; border-radius: 7px; background: #f1f5f1; object-fit: cover; }
+.report-card strong { display: block; font-size: 12px; }
+.report-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.report-card p { margin: 8px 0 0; font-size: 11px; white-space: pre-wrap; }
+.vehicle-lookup-form { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 10px; }
+.vehicle-lookup-result { display: grid; gap: 9px; margin-top: 14px; }
+.vehicle-lookup-result h3 { margin: 8px 0 0; font-size: 13px; }
+.vehicle-lookup-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px; color: #1f5d42; background: #edf5ef; border-radius: 8px; font-size: 12px; }
+.vehicle-lookup-card { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 10px; }
+.vehicle-lookup-card strong { font-size: 11px; }
 .permit-alerts { display: grid; gap: 8px; margin-bottom: 15px; }
 .permit-alert { display: grid; gap: 4px; padding: 11px 13px; border: 1px solid #f0d5cc; border-radius: 8px; color: #8e4538; background: #fff5f2; font-size: 11px; }
 .permit-alert.expiring { color: #805e27; background: #fff9e9; border-color: #f0e4c5; }
@@ -201,6 +214,9 @@ footer { display: flex; justify-content: space-between; gap: 10px; padding: 24px
   .panel-heading { align-items: start; }
   .search-input { max-width: 130px; }
   .security-filters { align-items: stretch; flex-direction: column; }
+  .report-card { grid-template-columns: 85px 1fr; gap: 9px; }
+  .report-photo { width: 85px; height: 75px; }
+  .vehicle-lookup-form { grid-template-columns: 1fr; }
   footer { flex-direction: column; }
 }
 @media print {

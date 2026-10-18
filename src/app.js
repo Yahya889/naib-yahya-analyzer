@@ -92,6 +92,12 @@ function createApp(options = {}) {
       details TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS vehicles (
+      id INTEGER PRIMARY KEY,
+      vehicle_code TEXT NOT NULL UNIQUE,
+      vehicle_plate TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS security_access (
       id INTEGER PRIMARY KEY,
       person_name TEXT NOT NULL,
@@ -102,6 +108,7 @@ function createApp(options = {}) {
       gate TEXT NOT NULL,
       person_count INTEGER NOT NULL CHECK (person_count > 0),
       vehicle_plate TEXT NOT NULL DEFAULT '',
+      vehicle_id INTEGER REFERENCES vehicles(id),
       entered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       exited_at TEXT,
       created_by INTEGER REFERENCES users(id)
@@ -125,6 +132,7 @@ function createApp(options = {}) {
       valid_from TEXT NOT NULL,
       valid_until TEXT NOT NULL,
       media_id INTEGER NOT NULL REFERENCES media(id),
+      vehicle_id INTEGER REFERENCES vehicles(id),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by INTEGER REFERENCES users(id)
     );
@@ -140,6 +148,34 @@ function createApp(options = {}) {
     );
     CREATE INDEX IF NOT EXISTS security_access_status_idx ON security_access(exited_at, id DESC);
     CREATE INDEX IF NOT EXISTS vehicle_permits_expiry_idx ON vehicle_permits(valid_until);
+  `);
+  for (const [table, column] of [
+    ['security_access', 'vehicle_id'],
+    ['vehicle_permits', 'vehicle_id']
+  ]) {
+    if (!db.pragma(`table_info(${table})`).some((item) => item.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER REFERENCES vehicles(id)`);
+    }
+  }
+  db.transaction(() => {
+    const plates = db.prepare(`
+      SELECT vehicle_plate FROM security_access WHERE trim(vehicle_plate) != ''
+      UNION SELECT vehicle_plate FROM vehicle_permits WHERE trim(vehicle_plate) != ''
+    `).all().map((row) => row.vehicle_plate.trim().toUpperCase());
+    const addVehicle = db.prepare('INSERT OR IGNORE INTO vehicles (vehicle_code, vehicle_plate) VALUES (?, ?)');
+    plates.forEach((plate) => addVehicle.run(`VH-${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`, plate));
+    db.exec(`
+      UPDATE security_access SET vehicle_id = (
+        SELECT id FROM vehicles WHERE vehicle_plate = UPPER(TRIM(security_access.vehicle_plate))
+      ) WHERE vehicle_id IS NULL AND trim(vehicle_plate) != '';
+      UPDATE vehicle_permits SET vehicle_id = (
+        SELECT id FROM vehicles WHERE vehicle_plate = UPPER(TRIM(vehicle_permits.vehicle_plate))
+      ) WHERE vehicle_id IS NULL AND trim(vehicle_plate) != '';
+    `);
+  })();
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS security_access_vehicle_idx ON security_access(vehicle_id, id DESC);
+    CREATE INDEX IF NOT EXISTS vehicle_permits_vehicle_idx ON vehicle_permits(vehicle_id, id DESC);
   `);
 
   const app = express();
@@ -170,6 +206,18 @@ function createApp(options = {}) {
 
   function audit(action, details = {}) {
     db.prepare('INSERT INTO audit_log (action, details) VALUES (?, ?)').run(action, JSON.stringify(details));
+  }
+
+  function getOrCreateVehicle(plateValue) {
+    const plate = plateValue.trim().toUpperCase();
+    if (!plate) return null;
+    let vehicle = db.prepare('SELECT id, vehicle_code, vehicle_plate FROM vehicles WHERE vehicle_plate = ?').get(plate);
+    if (!vehicle) {
+      const code = `VH-${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`;
+      db.prepare('INSERT INTO vehicles (vehicle_code, vehicle_plate) VALUES (?, ?)').run(code, plate);
+      vehicle = db.prepare('SELECT id, vehicle_code, vehicle_plate FROM vehicles WHERE vehicle_plate = ?').get(plate);
+    }
+    return vehicle;
   }
 
   function makeToken(userId) {
@@ -320,8 +368,11 @@ function createApp(options = {}) {
     }
     const records = db.prepare(`
       SELECT id, person_name, identity_number, phone, organization, purpose, gate,
-        person_count, vehicle_plate, entered_at, exited_at
-      FROM security_access
+        person_count, vehicle_plate, entered_at, exited_at, vehicle_code
+      FROM (
+        SELECT a.*, v.vehicle_code FROM security_access a
+        LEFT JOIN vehicles v ON v.id = a.vehicle_id
+      ) AS security_access
       WHERE (? = 'all' OR (? = 'inside' AND exited_at IS NULL) OR (? = 'exited' AND exited_at IS NOT NULL))
         AND (? = '' OR person_name LIKE ? OR identity_number LIKE ? OR phone LIKE ?
           OR organization LIKE ? OR vehicle_plate LIKE ? OR EXISTS (
@@ -366,13 +417,15 @@ function createApp(options = {}) {
     }
     const record = db.transaction(() => {
       const firstPerson = people[0];
+      const vehicle = getOrCreateVehicle(vehiclePlate);
       const result = db.prepare(`
         INSERT INTO security_access
-          (person_name, identity_number, phone, organization, purpose, gate, person_count, vehicle_plate, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (person_name, identity_number, phone, organization, purpose, gate, person_count, vehicle_plate, vehicle_id, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         firstPerson.name.trim(), firstPerson.identityNumber.trim(), firstPerson.phone.trim(),
-        organization.trim(), purpose.trim(), gate.trim(), people.length, vehiclePlate.trim(), req.userId
+        organization.trim(), purpose.trim(), gate.trim(), people.length, vehicle?.vehicle_plate || '',
+        vehicle?.id || null, req.userId
       );
       const addMember = db.prepare(`
         INSERT INTO security_access_members (access_id, person_name, identity_number, phone)
@@ -382,7 +435,10 @@ function createApp(options = {}) {
         result.lastInsertRowid, person.name.trim(), person.identityNumber.trim(), person.phone.trim()
       ));
       audit('تسجيل دخول للموقع', { accessId: result.lastInsertRowid, personCount: people.length });
-      return db.prepare('SELECT * FROM security_access WHERE id = ?').get(result.lastInsertRowid);
+      return db.prepare(`
+        SELECT a.*, v.vehicle_code FROM security_access a
+        LEFT JOIN vehicles v ON v.id = a.vehicle_id WHERE a.id = ?
+      `).get(result.lastInsertRowid);
     })();
     record.members = people.map((person) => ({
       name: person.name.trim(),
@@ -428,11 +484,12 @@ function createApp(options = {}) {
     const permits = db.prepare(`
       SELECT p.id, p.permit_number, p.vehicle_plate, p.driver_name, p.identity_number,
         p.phone, p.organization, p.purpose, p.valid_from, p.valid_until, p.media_id, p.created_at,
+        v.vehicle_code,
         CASE WHEN p.valid_from > date('now') THEN 'upcoming'
           WHEN p.valid_until < date('now') THEN 'expired'
           WHEN p.valid_until <= date('now', '+30 days') THEN 'expiring'
           ELSE 'active' END AS status
-      FROM vehicle_permits p
+      FROM vehicle_permits p LEFT JOIN vehicles v ON v.id = p.vehicle_id
       WHERE (? = 'all'
         OR (? = 'expired' AND p.valid_until < date('now'))
         OR (? = 'expiring' AND p.valid_from <= date('now') AND p.valid_until >= date('now') AND p.valid_until <= date('now', '+30 days'))
@@ -440,7 +497,7 @@ function createApp(options = {}) {
         OR (? = 'upcoming' AND p.valid_from > date('now')))
         AND (? = '' OR p.permit_number LIKE ? OR p.vehicle_plate LIKE ?
           OR p.driver_name LIKE ? OR p.identity_number LIKE ? OR p.organization LIKE ?)
-      ORDER BY p.valid_until ASC, p.id DESC LIMIT 500
+      ORDER BY p.valid_until ASC, p.id DESC LIMIT 100
     `).all(status, status, status, status, status, search, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     res.json(permits);
   });
@@ -450,22 +507,27 @@ function createApp(options = {}) {
     if (!plate || plate.length > 30) {
       return res.status(400).json({ error: 'أدخل رقم لوحة صحيحاً للاستعلام.' });
     }
+    const vehicle = db.prepare('SELECT vehicle_code FROM vehicles WHERE vehicle_plate = ? OR vehicle_code = ?')
+      .get(plate, plate);
     const permits = db.prepare(`
-      SELECT id, permit_number, vehicle_plate, driver_name, identity_number, phone,
-        organization, purpose, valid_from, valid_until, media_id, created_at,
-        CASE WHEN valid_from > date('now') THEN 'upcoming'
-          WHEN valid_until < date('now') THEN 'expired'
-          WHEN valid_until <= date('now', '+30 days') THEN 'expiring'
+      SELECT p.id, p.permit_number, p.vehicle_plate, p.driver_name, p.identity_number, p.phone,
+        p.organization, p.purpose, p.valid_from, p.valid_until, p.media_id, p.created_at,
+        v.vehicle_code,
+        CASE WHEN p.valid_from > date('now') THEN 'upcoming'
+          WHEN p.valid_until < date('now') THEN 'expired'
+          WHEN p.valid_until <= date('now', '+30 days') THEN 'expiring'
           ELSE 'active' END AS status
-      FROM vehicle_permits WHERE UPPER(vehicle_plate) = ?
-      ORDER BY valid_until DESC, id DESC LIMIT 100
-    `).all(plate);
+      FROM vehicle_permits p LEFT JOIN vehicles v ON v.id = p.vehicle_id
+      WHERE UPPER(p.vehicle_plate) = ? OR UPPER(v.vehicle_code) = ?
+      ORDER BY p.valid_until DESC, p.id DESC LIMIT 100
+    `).all(plate, plate);
     const access = db.prepare(`
-      SELECT id, person_name, identity_number, phone, organization, purpose, gate,
-        person_count, vehicle_plate, entered_at, exited_at
-      FROM security_access WHERE UPPER(vehicle_plate) = ?
-      ORDER BY id DESC LIMIT 100
-    `).all(plate);
+      SELECT a.id, a.person_name, a.identity_number, a.phone, a.organization, a.purpose, a.gate,
+        a.person_count, a.vehicle_plate, a.entered_at, a.exited_at, v.vehicle_code
+      FROM security_access a LEFT JOIN vehicles v ON v.id = a.vehicle_id
+      WHERE UPPER(a.vehicle_plate) = ? OR UPPER(v.vehicle_code) = ?
+      ORDER BY a.id DESC LIMIT 100
+    `).all(plate, plate);
     if (access.length) {
       const placeholders = access.map(() => '?').join(',');
       const members = db.prepare(`
@@ -480,7 +542,7 @@ function createApp(options = {}) {
       });
       access.forEach((record) => { record.members = membersByAccess.get(record.id) || []; });
     }
-    res.json({ plate, permits, access });
+    res.json({ plate: permits[0]?.vehicle_plate || access[0]?.vehicle_plate || plate, vehicle_code: vehicle?.vehicle_code || permits[0]?.vehicle_code || access[0]?.vehicle_code || null, permits, access });
   });
 
   app.post('/api/security/permits', requireAuth, permitPhotoUpload.single('permitPhoto'), (req, res) => {
@@ -508,6 +570,7 @@ function createApp(options = {}) {
 
     try {
       const createPermit = db.transaction(() => {
+        const vehicle = getOrCreateVehicle(vehiclePlate);
         const mediaResult = db.prepare(`
           INSERT INTO media (filename, original_name, mime_type, size, category)
           VALUES (?, ?, ?, ?, ?)
@@ -521,18 +584,18 @@ function createApp(options = {}) {
         const permitResult = db.prepare(`
           INSERT INTO vehicle_permits
             (permit_number, vehicle_plate, driver_name, identity_number, phone, organization,
-              purpose, valid_from, valid_until, media_id, created_by)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              purpose, valid_from, valid_until, media_id, vehicle_id, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          permitNumber.trim(), vehiclePlate.trim(), driverName.trim(), identityNumber.trim(),
+          permitNumber.trim(), vehicle.vehicle_plate, driverName.trim(), identityNumber.trim(),
           phone.trim(), organization.trim(), purpose.trim(), validFrom, validUntil,
-          mediaResult.lastInsertRowid, req.userId
+          mediaResult.lastInsertRowid, vehicle.id, req.userId
         );
         audit('إضافة تصريح مركبة', { permitId: permitResult.lastInsertRowid });
         return db.prepare(`
-          SELECT id, permit_number, vehicle_plate, driver_name, identity_number, phone,
-            organization, purpose, valid_from, valid_until, media_id, created_at
-          FROM vehicle_permits WHERE id = ?
+          SELECT p.id, p.permit_number, p.vehicle_plate, p.driver_name, p.identity_number, p.phone,
+            p.organization, p.purpose, p.valid_from, p.valid_until, p.media_id, p.created_at, v.vehicle_code
+          FROM vehicle_permits p JOIN vehicles v ON v.id = p.vehicle_id WHERE p.id = ?
         `).get(permitResult.lastInsertRowid);
       });
       res.status(201).json(createPermit());

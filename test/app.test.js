@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
+const Database = require('better-sqlite3');
 const { createApp } = require('../src/app');
 const { createBackupRunner } = require('../src/backups');
 
@@ -126,11 +127,12 @@ test('authenticates users and provides protected document, accounting, and media
     organization: 'شركة تجريبية',
     purpose: 'زيارة عمل',
     gate: 'البوابة الرئيسية',
-    vehiclePlate: 'ABC 123'
+    vehiclePlate: 'XYZ 987'
   }, staff.token));
   assert.equal(access.status, 201);
   const accessRecord = await access.json();
   assert.equal(accessRecord.person_count, 2);
+  assert.match(accessRecord.vehicle_code, /^VH-[0-9A-F]{12}$/);
   const accessList = await (await request('/api/security/access?status=inside&search=ID-102', {
     headers: authHeaders(staff.token)
   })).json();
@@ -174,11 +176,22 @@ test('authenticates users and provides protected document, accounting, and media
   });
   assert.equal(permitResponse.status, 201);
   const permit = await permitResponse.json();
+  assert.equal(permit.vehicle_code, accessRecord.vehicle_code);
   const permitList = await (await request('/api/security/permits?status=expiring&search=XYZ', {
     headers: authHeaders(staff.token)
   })).json();
   assert.equal(permitList.length, 1);
   assert.equal(permitList[0].status, 'expiring');
+  const vehicleLookup = await (await request(`/api/security/vehicles?plate=${encodeURIComponent('XYZ 987')}`, {
+    headers: authHeaders(staff.token)
+  })).json();
+  assert.equal(vehicleLookup.vehicle_code, permit.vehicle_code);
+  assert.equal(vehicleLookup.permits[0].driver_name, 'سائق تجريبي');
+  assert.equal(vehicleLookup.access[0].members.length, 2);
+  const codeLookup = await (await request(`/api/security/vehicles?plate=${encodeURIComponent(permit.vehicle_code)}`, {
+    headers: authHeaders(staff.token)
+  })).json();
+  assert.equal(codeLookup.plate, 'XYZ 987');
   assert.equal((await (await request('/api/security/summary', {
     headers: authHeaders(staff.token)
   })).json()).expiring_permits, 1);
@@ -188,6 +201,27 @@ test('authenticates users and provides protected document, accounting, and media
     method: 'DELETE',
     headers: authHeaders(staff.token)
   })).status, 409);
+
+  const reportForm = new FormData();
+  reportForm.append('title', 'ملاحظة عند البوابة');
+  reportForm.append('category', 'ملاحظة');
+  reportForm.append('location', 'البوابة الرئيسية');
+  reportForm.append('details', 'تم توثيق الحالة بالصورة.');
+  reportForm.append('reportPhoto', new Blob(['test report image'], { type: 'image/png' }), 'report.png');
+  const reportResponse = await request('/api/security/reports', {
+    method: 'POST',
+    headers: authHeaders(staff.token),
+    body: reportForm
+  });
+  assert.equal(reportResponse.status, 201);
+  const report = await reportResponse.json();
+  const reports = await (await request('/api/security/reports', {
+    headers: authHeaders(staff.token)
+  })).json();
+  assert.equal(reports[0].title, 'ملاحظة عند البوابة');
+  assert.equal((await request(`/api/media/${report.media_id}/preview`, {
+    headers: authHeaders(staff.token)
+  })).status, 200);
 
   let limitedResponse;
   for (let i = 0; i < 300; i += 1) limitedResponse = await request('/api/health');
@@ -233,6 +267,62 @@ test('trusted proxy client IPs have independent login limits', async (t) => {
     body: JSON.stringify(credentials)
   });
   assert.equal(otherClient.status, 200);
+});
+
+test('adds stable vehicle codes to data stored before the vehicle registry existed', (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'naib-vehicle-migration-'));
+  const databasePath = path.join(dataDir, 'legacy.sqlite');
+  const legacyDb = new Database(databasePath);
+  legacyDb.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'staff', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE media (
+      id INTEGER PRIMARY KEY, filename TEXT NOT NULL UNIQUE, original_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL, size INTEGER NOT NULL, category TEXT NOT NULL DEFAULT 'عام',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE security_access (
+      id INTEGER PRIMARY KEY, person_name TEXT NOT NULL, identity_number TEXT NOT NULL, phone TEXT NOT NULL,
+      organization TEXT NOT NULL, purpose TEXT NOT NULL, gate TEXT NOT NULL,
+      person_count INTEGER NOT NULL, vehicle_plate TEXT NOT NULL DEFAULT '',
+      entered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, exited_at TEXT, created_by INTEGER
+    );
+    CREATE TABLE vehicle_permits (
+      id INTEGER PRIMARY KEY, permit_number TEXT NOT NULL UNIQUE, vehicle_plate TEXT NOT NULL,
+      driver_name TEXT NOT NULL, identity_number TEXT NOT NULL, phone TEXT NOT NULL,
+      organization TEXT NOT NULL, purpose TEXT NOT NULL, valid_from TEXT NOT NULL,
+      valid_until TEXT NOT NULL, media_id INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by INTEGER
+    );
+    INSERT INTO security_access
+      (person_name, identity_number, phone, organization, purpose, gate, person_count, vehicle_plate)
+    VALUES ('زائر', 'ID-1', '0500000000', '', 'زيارة', 'الرئيسية', 1, 'xyz 987');
+    INSERT INTO media (filename, original_name, mime_type, size) VALUES ('old.png', 'old.png', 'image/png', 1);
+    INSERT INTO vehicle_permits
+      (permit_number, vehicle_plate, driver_name, identity_number, phone, organization,
+        purpose, valid_from, valid_until, media_id)
+    VALUES ('OLD-1', 'XYZ 987', 'سائق', 'ID-2', '0500000001', '', 'دخول', '2020-01-01', '2030-01-01', 1);
+  `);
+  legacyDb.close();
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+
+  const app = createApp({
+    databasePath,
+    storagePath: path.join(dataDir, 'uploads'),
+    tokenSecret: 'test-only-token-secret-long-enough'
+  });
+  const vehicles = app.locals.db.prepare(`
+    SELECT DISTINCT vehicle_code FROM (
+      SELECT v.vehicle_code FROM security_access a JOIN vehicles v ON v.id = a.vehicle_id
+      UNION ALL
+      SELECT v.vehicle_code FROM vehicle_permits p JOIN vehicles v ON v.id = p.vehicle_id
+    )
+  `).all();
+  assert.equal(vehicles.length, 1);
+  assert.match(vehicles[0].vehicle_code, /^VH-[0-9A-F]{12}$/);
+  app.locals.close();
 });
 
 test('daily backups retry media independently when its first copy fails', async (t) => {
