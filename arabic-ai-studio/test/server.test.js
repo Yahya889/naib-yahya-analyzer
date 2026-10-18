@@ -37,6 +37,24 @@ test('reports model configuration and rejects invalid task requests', async () =
   });
 });
 
+test('rejects cross-origin task requests before contacting the local model', async () => {
+  let modelCalled = false;
+  await withServer({
+    fetchImpl: async () => {
+      modelCalled = true;
+      return Response.json({ message: { content: 'غير متوقع' } });
+    }
+  }, async (base) => {
+    const response = await fetch(`${base}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
+      body: JSON.stringify({ task: 'اختبار', domain: 'أعمال', phase: 'plan' })
+    });
+    assert.equal(response.status, 403);
+    assert.equal(modelCalled, false);
+  });
+});
+
 test('sends both task stages only to the configured local model bridge and handles model failures', async () => {
   const requests = [];
   const fetchImpl = async (_url, options) => {

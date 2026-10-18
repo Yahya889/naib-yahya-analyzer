@@ -9,7 +9,7 @@ const PORT = Number(process.env.PORT) || 4173;
 const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b';
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/chat';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const MAX_BODY_SIZE = 32 * 1024;
+const MAX_BODY_SIZE = 512 * 1024;
 const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -48,7 +48,7 @@ async function readJson(req) {
 }
 
 function createServer({ fetchImpl = fetch, ollamaUrl = OLLAMA_URL, model = MODEL } = {}) {
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const requestUrl = new URL(req.url, `http://${HOST}`);
 
     if (req.method === 'GET' && requestUrl.pathname === '/api/health') {
@@ -56,12 +56,17 @@ function createServer({ fetchImpl = fetch, ollamaUrl = OLLAMA_URL, model = MODEL
     }
 
     if (req.method === 'POST' && requestUrl.pathname === '/api/chat') {
+      const origin = req.headers.origin;
+      const expectedOrigin = `http://127.0.0.1:${server.address()?.port}`;
+      if (origin && origin !== expectedOrigin) {
+        return send(res, 403, { error: 'مصدر الطلب غير مسموح.' });
+      }
       try {
         const body = await readJson(req);
-        if (typeof body.task !== 'string' || !body.task.trim() || body.task.length > 12000 ||
+        if (typeof body.task !== 'string' || !body.task.trim() || body.task.length > 30000 ||
             typeof body.domain !== 'string' || body.domain.length > 80 ||
             typeof body.phase !== 'string' || !['plan', 'execute'].includes(body.phase) ||
-            (body.phase === 'execute' && (typeof body.plan !== 'string' || body.plan.length > 12000))) {
+            (body.phase === 'execute' && (typeof body.plan !== 'string' || body.plan.length > 30000))) {
           return send(res, 400, { error: 'أدخل طلباً صالحاً ومختصراً واختر مرحلة العمل.' });
         }
 
@@ -120,6 +125,7 @@ function createServer({ fetchImpl = fetch, ollamaUrl = OLLAMA_URL, model = MODEL
       return send(res, 500, { error: 'تعذر تحميل واجهة التطبيق.' });
     }
   });
+  return server;
 }
 
 if (require.main === module) {

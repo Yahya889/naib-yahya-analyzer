@@ -107,9 +107,9 @@ document.querySelector('#reference-file').addEventListener('change', async (even
   const file = event.currentTarget.files[0];
   state.reference = '';
   if (!file) return;
-  if (!/\.(txt|md)$/i.test(file.name) || file.size > 1024 * 1024) {
+  if (!/\.(txt|md)$/i.test(file.name) || file.size > 16 * 1024) {
     event.currentTarget.value = '';
-    formMessage.textContent = 'اختر ملف TXT أو MD لا يتجاوز 1 ميغابايت.';
+    formMessage.textContent = 'اختر ملف TXT أو MD لا يتجاوز 16 كيلوبايت.';
     return;
   }
   state.reference = await file.text();
