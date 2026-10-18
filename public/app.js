@@ -81,15 +81,26 @@ setupButton.addEventListener('click', () => {
   setupKeyField.hidden = !registering;
   setupKeyField.querySelector('input').required = registering;
   document.querySelector('#access-notice').hidden = registering;
+  const loginIdInput = authForm.querySelector('input[name="loginId"]');
+  loginIdInput.inputMode = registering ? 'text' : 'numeric';
+  loginIdInput.pattern = registering ? '[A-Za-z0-9_.-]{6,32}' : '[0-9]{10}|[A-Za-z0-9_.-]{6,32}';
+  loginIdInput.maxLength = 32;
+  document.querySelector('#login-id-label').firstChild.textContent = registering
+    ? 'معرف المالك الخاص'
+    : 'رقم الهوية أو معرف الدخول';
   authForm.querySelector('button[type="submit"]').textContent = registering ? 'إنشاء الحساب الأول' : 'تسجيل الدخول';
   authForm.querySelector('input[name="password"]').autocomplete = registering ? 'new-password' : 'current-password';
   setupButton.textContent = registering ? 'العودة لتسجيل الدخول' : 'إعداد الحساب الأول';
-  setAuthMessage(registering ? 'أدخل رقم الهوية والاسم؛ الحساب الأول يحصل على صلاحية مسؤول النظام.' : '');
+  setAuthMessage(registering ? 'اختر معرف دخول خاصاً لا يكشف صلاحية حسابك، وأدخل اسمك الكامل.' : '');
 });
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const fields = Object.fromEntries(new FormData(authForm));
+  if (registering) {
+    fields.ownerLoginId = fields.loginId;
+    delete fields.loginId;
+  }
   setAuthMessage('');
   try {
     const result = await api(registering ? '/api/auth/register' : '/api/auth/login', {
@@ -108,7 +119,7 @@ async function enterApp() {
     currentUser = await api('/api/auth/me');
     authView.hidden = true;
     appView.hidden = false;
-    document.querySelector('#user-label').textContent = `${currentUser.username} · ${labels[currentUser.role]}`;
+    document.querySelector('#user-label').textContent = currentUser.username;
     document.querySelector('#users-link').hidden = currentUser.role !== 'admin';
     if (location.hash === '#users' && currentUser.role !== 'admin') location.hash = '#dashboard';
     await navigate();
@@ -129,6 +140,7 @@ function logout(showMessage = true) {
   document.querySelector('#account-name-field input').required = false;
   document.querySelector('#setup-key-field').hidden = true;
   document.querySelector('#setup-key-field input').required = false;
+  document.querySelector('#login-id-label').firstChild.textContent = 'رقم الهوية أو معرف الدخول';
   document.querySelector('#access-notice').hidden = false;
   setupButton.textContent = 'إعداد الحساب الأول';
   if (showMessage) setAuthMessage('تم تسجيل الخروج.');

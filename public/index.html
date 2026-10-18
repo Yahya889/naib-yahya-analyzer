@@ -16,15 +16,15 @@
         <h1>نائب</h1>
         <p class="muted">منصة خاصة للمستخدمين المصرّح لهم</p>
         <form id="auth-form" class="stack">
-          <label>رقم الهوية<input name="identityNumber" type="text" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" autocomplete="username" required></label>
-          <label id="account-name-field" hidden>الاسم الظاهر<input name="username" minlength="3" maxlength="40" autocomplete="name"></label>
+          <label id="login-id-label">رقم الهوية أو معرف الدخول<input name="loginId" type="text" autocomplete="username" required></label>
+          <label id="account-name-field" hidden>الاسم الكامل<input name="username" minlength="3" maxlength="80" autocomplete="name"></label>
           <label id="setup-key-field" hidden>رمز إعداد المسؤول<input name="setupKey" type="password" autocomplete="off"></label>
           <label>كلمة المرور<input name="password" type="password" autocomplete="current-password" minlength="12" required></label>
           <button class="button primary" type="submit">تسجيل الدخول</button>
         </form>
         <button id="setup-button" class="text-button" type="button" hidden>إعداد الحساب الأول</button>
         <p id="auth-message" class="form-message" role="status"></p>
-        <p id="access-notice" class="auth-notice">الدخول متاح فقط للحسابات التي ينشئها مسؤول النظام. إعداد المسؤول الأول يتطلب رمزاً من مدير الخادم.</p>
+        <p id="access-notice" class="auth-notice">الدخول متاح فقط للحسابات التي ينشئها مسؤول النظام. لا تكشف معرف الدخول أو كلمة المرور لأي شخص.</p>
       </section>
     </main>
 

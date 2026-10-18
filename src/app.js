@@ -116,6 +116,7 @@ function createApp(options = {}) {
       person_count INTEGER NOT NULL CHECK (person_count > 0),
       vehicle_plate TEXT NOT NULL DEFAULT '',
       vehicle_id INTEGER REFERENCES vehicles(id),
+      vehicle_photo_media_id INTEGER REFERENCES media(id),
       entered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       exited_at TEXT,
       created_by INTEGER REFERENCES users(id)
@@ -175,6 +176,7 @@ function createApp(options = {}) {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_identity_number_idx ON users(identity_number) WHERE identity_number IS NOT NULL');
   for (const [table, column] of [
     ['security_access', 'vehicle_id'],
+    ['security_access', 'vehicle_photo_media_id'],
     ['vehicle_permits', 'vehicle_id']
   ]) {
     if (!db.pragma(`table_info(${table})`).some((item) => item.name === column)) {
@@ -316,7 +318,8 @@ function createApp(options = {}) {
   });
 
   app.post('/api/auth/register', authRateLimit, (req, res) => {
-    const { username, ownerLoginId, password, setupKey } = req.body || {};
+    const { username, ownerLoginId, loginId, password, setupKey } = req.body || {};
+    const ownerId = ownerLoginId || loginId;
     if (!initialAdminSetupKey) {
       return res.status(503).json({ error: 'إعداد الحساب الأول غير متاح؛ اطلب من مسؤول الخادم تهيئة المنصة.' });
     }
@@ -328,7 +331,7 @@ function createApp(options = {}) {
     if (!validFullName(username)) {
       return res.status(400).json({ error: 'أدخل الاسم الكامل.' });
     }
-    if (!validOwnerLoginId(ownerLoginId)) {
+    if (!validOwnerLoginId(ownerId)) {
       return res.status(400).json({ error: 'معرف المالك يجب أن يتكون من 6 إلى 32 حرفاً إنجليزياً أو رقماً.' });
     }
     if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
@@ -340,7 +343,7 @@ function createApp(options = {}) {
     const salt = crypto.randomBytes(16).toString('hex');
     const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
     const result = db.prepare('INSERT INTO users (username, owner_login_id, password_hash, salt, role) VALUES (?, ?, ?, ?, ?)')
-      .run(username.trim(), ownerLoginId.trim(), passwordHash, salt, 'admin');
+      .run(username.trim(), ownerId.trim(), passwordHash, salt, 'admin');
     audit('إنشاء الحساب الأول', { userId: result.lastInsertRowid });
     res.status(201).json({ token: makeToken(result.lastInsertRowid), username: username.trim() });
   });
@@ -376,12 +379,15 @@ function createApp(options = {}) {
   });
 
   app.get('/api/users', requireAuth, requireAdmin, (_req, res) => {
-    res.json(db.prepare('SELECT id, username, identity_number, role, created_at FROM users ORDER BY id').all());
+    res.json(db.prepare(`
+      SELECT id, username, identity_number, role, owner_login_id IS NOT NULL AS has_owner_login_id, created_at
+      FROM users ORDER BY id
+    `).all());
   });
 
   app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
     const { username, identityNumber, password, role = 'staff' } = req.body || {};
-    if (typeof username !== 'string' || !/^[\p{L}\p{N}_.-]{3,40}$/u.test(username.trim()) ||
+    if (!validFullName(username) ||
         typeof identityNumber !== 'string' || !/^\d{10}$/.test(identityNumber.trim()) ||
         typeof password !== 'string' || password.length < 12 || password.length > 128 ||
         !['admin', 'staff'].includes(role)) {
@@ -419,6 +425,30 @@ function createApp(options = {}) {
     }
   });
 
+  app.patch('/api/users/:id/owner-login', requireAuth, requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    const { ownerLoginId } = req.body || {};
+    if (!Number.isSafeInteger(id) || id < 1 || !validOwnerLoginId(ownerLoginId)) {
+      return res.status(400).json({ error: 'معرف المالك يجب أن يتكون من 6 إلى 32 حرفاً إنجليزياً أو رقماً.' });
+    }
+    const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
+    if (!user || user.role !== 'admin') return res.status(404).json({ error: 'حساب المالك غير موجود.' });
+    const conflict = db.prepare(`
+      SELECT 1 FROM users
+      WHERE id != ? AND (owner_login_id = ? OR identity_number = ?)
+      LIMIT 1
+    `).get(id, ownerLoginId.trim(), ownerLoginId.trim());
+    if (conflict) return res.status(409).json({ error: 'معرف الدخول مستخدم لحساب آخر.' });
+    try {
+      db.prepare('UPDATE users SET owner_login_id = ? WHERE id = ?').run(ownerLoginId.trim(), id);
+      audit('تحديث معرف دخول المالك', { userId: id });
+      res.json({ id, owner_login_configured: true });
+    } catch (error) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'معرف الدخول مستخدم لحساب آخر.' });
+      throw error;
+    }
+  });
+
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
   app.get('/api/security/summary', requireAuth, (_req, res) => {
@@ -450,7 +480,7 @@ function createApp(options = {}) {
     }
     const records = db.prepare(`
       SELECT id, person_name, identity_number, phone, organization, purpose, gate,
-        person_count, vehicle_plate, entered_at, exited_at, vehicle_code
+        person_count, vehicle_plate, entered_at, exited_at, vehicle_code, vehicle_photo_media_id
       FROM (
         SELECT a.*, v.vehicle_code FROM security_access a
         LEFT JOIN vehicles v ON v.id = a.vehicle_id
@@ -483,10 +513,31 @@ function createApp(options = {}) {
     res.json(records.map((record) => ({ ...record, members: membersByAccess.get(record.id) || [] })));
   });
 
-  app.post('/api/security/access', requireAuth, (req, res) => {
+  const vehiclePhotoUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_PERMIT_PHOTO_SIZE, files: 1 },
+    fileFilter: (_req, file, callback) => {
+      const extension = path.extname(file.originalname).toLowerCase();
+      if (!['.jpg', '.jpeg', '.png'].includes(extension) ||
+          !ALLOWED_TYPES[extension]?.includes(file.mimetype)) {
+        return callback(new Error('صورة المركبة يجب أن تكون JPG أو PNG.'));
+      }
+      callback(null, true);
+    }
+  });
+
+  app.post('/api/security/access', requireAuth, (req, res, next) => {
+    if (req.is('multipart/form-data')) return vehiclePhotoUpload.single('vehiclePhoto')(req, res, next);
+    next();
+  }, (req, res) => {
     const {
-      people, organization = '', purpose, gate, vehiclePlate = ''
+      organization = '', purpose, gate, vehiclePlate = ''
     } = req.body || {};
+    let people = req.body?.people;
+    if (typeof people === 'string') {
+      try { people = JSON.parse(people); }
+      catch { people = null; }
+    }
     const requiredText = (value, max) =>
       typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
     if (!Array.isArray(people) || people.length < 1 || people.length > 200 ||
@@ -497,37 +548,58 @@ function createApp(options = {}) {
         typeof vehiclePlate !== 'string' || vehiclePlate.trim().length > 30) {
       return res.status(400).json({ error: 'أدخل بيانات كل شخص (الاسم والهوية والهاتف) وتحقق من الجهة والغرض والبوابة.' });
     }
-    const record = db.transaction(() => {
-      const firstPerson = people[0];
-      const vehicle = getOrCreateVehicle(vehiclePlate);
-      const result = db.prepare(`
-        INSERT INTO security_access
-          (person_name, identity_number, phone, organization, purpose, gate, person_count, vehicle_plate, vehicle_id, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        firstPerson.name.trim(), firstPerson.identityNumber.trim(), firstPerson.phone.trim(),
-        organization.trim(), purpose.trim(), gate.trim(), people.length, vehicle?.vehicle_plate || '',
-        vehicle?.id || null, req.userId
-      );
-      const addMember = db.prepare(`
-        INSERT INTO security_access_members (access_id, person_name, identity_number, phone)
-        VALUES (?, ?, ?, ?)
-      `);
-      people.forEach((person) => addMember.run(
-        result.lastInsertRowid, person.name.trim(), person.identityNumber.trim(), person.phone.trim()
-      ));
-      audit('تسجيل دخول للموقع', { accessId: result.lastInsertRowid, personCount: people.length });
-      return db.prepare(`
-        SELECT a.*, v.vehicle_code FROM security_access a
-        LEFT JOIN vehicles v ON v.id = a.vehicle_id WHERE a.id = ?
-      `).get(result.lastInsertRowid);
-    })();
-    record.members = people.map((person) => ({
-      name: person.name.trim(),
-      identity_number: person.identityNumber.trim(),
-      phone: person.phone.trim()
-    }));
-    res.status(201).json(record);
+    let savedPhoto;
+    try {
+      if (req.file) savedPhoto = saveSecurityImage(req.file);
+      const record = db.transaction(() => {
+        const firstPerson = people[0];
+        const vehicle = getOrCreateVehicle(vehiclePlate);
+        let photoMediaId = null;
+        if (savedPhoto) {
+          photoMediaId = db.prepare(`
+            INSERT INTO media (filename, original_name, mime_type, size, category)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(
+            savedPhoto.filename,
+            path.basename(req.file.originalname.replaceAll('\\', '/')).slice(0, 255),
+            req.file.mimetype,
+            req.file.size,
+            'صور المركبات عند البوابة'
+          ).lastInsertRowid;
+        }
+        const result = db.prepare(`
+          INSERT INTO security_access
+            (person_name, identity_number, phone, organization, purpose, gate, person_count,
+              vehicle_plate, vehicle_id, vehicle_photo_media_id, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          firstPerson.name.trim(), firstPerson.identityNumber.trim(), firstPerson.phone.trim(),
+          organization.trim(), purpose.trim(), gate.trim(), people.length, vehicle?.vehicle_plate || '',
+          vehicle?.id || null, photoMediaId, req.userId
+        );
+        const addMember = db.prepare(`
+          INSERT INTO security_access_members (access_id, person_name, identity_number, phone)
+          VALUES (?, ?, ?, ?)
+        `);
+        people.forEach((person) => addMember.run(
+          result.lastInsertRowid, person.name.trim(), person.identityNumber.trim(), person.phone.trim()
+        ));
+        audit('تسجيل دخول للموقع', { accessId: result.lastInsertRowid, personCount: people.length });
+        return db.prepare(`
+          SELECT a.*, v.vehicle_code FROM security_access a
+          LEFT JOIN vehicles v ON v.id = a.vehicle_id WHERE a.id = ?
+        `).get(result.lastInsertRowid);
+      })();
+      record.members = people.map((person) => ({
+        name: person.name.trim(),
+        identity_number: person.identityNumber.trim(),
+        phone: person.phone.trim()
+      }));
+      res.status(201).json(record);
+    } catch (error) {
+      if (savedPhoto) fs.rmSync(savedPhoto.path, { force: true });
+      throw error;
+    }
   });
 
   app.post('/api/security/access/:id/exit', requireAuth, (req, res) => {
