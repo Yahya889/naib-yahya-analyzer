@@ -21,6 +21,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .auth-card { width: min(100%, 410px); padding: 38px; background: var(--paper); border: 1px solid var(--border); border-radius: 22px; box-shadow: 0 20px 60px #1836290c; text-align: center; }
 .auth-card h1 { margin: 8px 0 0; font-size: 32px; }
 .auth-card .muted { margin: 2px 0 28px; }
+.auth-notice { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.identity-link-form { display: flex; align-items: center; gap: 6px; }
+.identity-link-form input { width: 135px; padding: 8px; font-size: 10px; }
+.identity-link-form .button { min-height: 34px; padding: 6px 9px; white-space: nowrap; font-size: 10px; }
 .brand-mark { width: 44px; height: 44px; display: inline-grid; place-items: center; border-radius: 14px; color: #fff; background: var(--green); font-size: 23px; font-weight: 700; }
 .auth-card .brand-mark { width: 54px; height: 54px; font-size: 27px; }
 .stack { display: grid; gap: 16px; }
@@ -214,6 +218,8 @@ footer { display: flex; justify-content: space-between; gap: 10px; padding: 24px
   .panel-heading { align-items: start; }
   .search-input { max-width: 130px; }
   .security-filters { align-items: stretch; flex-direction: column; }
+  .identity-link-form { align-items: stretch; flex-direction: column; }
+  .identity-link-form input { width: 100%; }
   .report-card { grid-template-columns: 85px 1fr; gap: 9px; }
   .report-photo { width: 85px; height: 75px; }
   .vehicle-lookup-form { grid-template-columns: 1fr; }

@@ -74,10 +74,17 @@ async function checkSetup() {
 
 setupButton.addEventListener('click', () => {
   registering = !registering;
+  const nameField = document.querySelector('#account-name-field');
+  const setupKeyField = document.querySelector('#setup-key-field');
+  nameField.hidden = !registering;
+  nameField.querySelector('input').required = registering;
+  setupKeyField.hidden = !registering;
+  setupKeyField.querySelector('input').required = registering;
+  document.querySelector('#access-notice').hidden = registering;
   authForm.querySelector('button[type="submit"]').textContent = registering ? 'إنشاء الحساب الأول' : 'تسجيل الدخول';
   authForm.querySelector('input[name="password"]').autocomplete = registering ? 'new-password' : 'current-password';
   setupButton.textContent = registering ? 'العودة لتسجيل الدخول' : 'إعداد الحساب الأول';
-  setAuthMessage(registering ? 'الحساب الأول يحصل على صلاحية مسؤول النظام.' : '');
+  setAuthMessage(registering ? 'أدخل رقم الهوية والاسم؛ الحساب الأول يحصل على صلاحية مسؤول النظام.' : '');
 });
 
 authForm.addEventListener('submit', async (event) => {
@@ -118,6 +125,11 @@ function logout(showMessage = true) {
   registering = false;
   authForm.reset();
   authForm.querySelector('button[type="submit"]').textContent = 'تسجيل الدخول';
+  document.querySelector('#account-name-field').hidden = true;
+  document.querySelector('#account-name-field input').required = false;
+  document.querySelector('#setup-key-field').hidden = true;
+  document.querySelector('#setup-key-field input').required = false;
+  document.querySelector('#access-notice').hidden = false;
   setupButton.textContent = 'إعداد الحساب الأول';
   if (showMessage) setAuthMessage('تم تسجيل الخروج.');
   checkSetup();
@@ -199,6 +211,20 @@ document.querySelector('#report-form').addEventListener('submit', async (event) 
   finally { button.disabled = false; }
 });
 
+document.querySelector('#procedure-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/security/procedures', { method: 'POST', body: new FormData(form) });
+    form.reset();
+    await loadProcedures();
+    showToast('تم حفظ الإجراء اليومي باسم المستخدم.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
 document.querySelector('#permit-search').addEventListener('input', loadPermits);
 
 document.querySelector('#vehicle-lookup-form').addEventListener('submit', async (event) => {
@@ -257,7 +283,8 @@ async function loadSecurity() {
     api('/api/security/summary'),
     loadAccessRecords(),
     loadPermits(),
-    loadReports()
+    loadReports(),
+    loadProcedures()
   ]);
   document.querySelector('#security-inside-count').textContent = formatMoney(summary.people_inside);
   document.querySelector('#security-active-visits').textContent = formatMoney(summary.active_visits);
@@ -440,6 +467,34 @@ async function loadReports() {
       textElement('p', report.details)
     );
     card.append(photo, info);
+    list.append(card);
+  });
+}
+
+async function loadProcedures() {
+  const procedures = await api('/api/security/procedures');
+  const list = document.querySelector('#procedure-list');
+  list.replaceChildren();
+  if (!procedures.length) return appendEmpty(list, 'لا توجد إجراءات يومية مسجلة بعد.');
+  procedures.forEach((procedure) => {
+    const card = document.createElement('article');
+    card.className = 'report-card';
+    if (procedure.media_id) {
+      const photo = document.createElement('img');
+      photo.className = 'report-photo';
+      photo.alt = `صورة الإجراء ${procedure.title}`;
+      api(`/api/media/${procedure.media_id}/preview`)
+        .then((blob) => { photo.src = URL.createObjectURL(blob); })
+        .catch(() => { photo.alt = 'تعذرت معاينة الصورة'; });
+      card.append(photo);
+    }
+    const info = document.createElement('div');
+    info.append(
+      textElement('strong', procedure.title),
+      textElement('small', `${procedure.category} · ${procedure.location || 'الموقع غير محدد'} · ${formatTimestamp(procedure.created_at)} · سجله: ${procedure.created_by_name}`),
+      textElement('p', procedure.details)
+    );
+    card.append(info);
     list.append(card);
   });
 }
@@ -805,11 +860,41 @@ async function loadUsers() {
     name.textContent = user.username;
     const date = document.createElement('small');
     date.textContent = new Date(user.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('ar-SA');
-    details.append(name, date);
+    const identity = document.createElement('small');
+    identity.textContent = user.identity_number || 'لم يُربط رقم هوية بعد';
+    details.append(name, identity, date);
+    const identityForm = document.createElement('form');
+    identityForm.className = 'identity-link-form';
+    const identityInput = document.createElement('input');
+    identityInput.name = 'identityNumber';
+    identityInput.inputMode = 'numeric';
+    identityInput.pattern = '[0-9]{10}';
+    identityInput.maxLength = 10;
+    identityInput.placeholder = 'رقم الهوية';
+    identityInput.value = user.identity_number || '';
+    identityInput.required = true;
+    const updateIdentity = document.createElement('button');
+    updateIdentity.type = 'submit';
+    updateIdentity.className = 'button secondary';
+    updateIdentity.textContent = 'حفظ الهوية';
+    identityForm.append(identityInput, updateIdentity);
+    identityForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      updateIdentity.disabled = true;
+      try {
+        await api(`/api/users/${user.id}/identity`, {
+          method: 'PATCH',
+          body: JSON.stringify({ identityNumber: identityInput.value })
+        });
+        await loadUsers();
+        showToast('تم ربط رقم الهوية بالحساب.');
+      } catch (error) { showToast(error.message); }
+      finally { updateIdentity.disabled = false; }
+    });
     const role = document.createElement('span');
     role.className = 'tag';
     role.textContent = labels[user.role];
-    row.append(details, role);
+    row.append(details, identityForm, role);
     list.append(row);
   });
 }

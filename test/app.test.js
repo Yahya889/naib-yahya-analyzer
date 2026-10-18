@@ -12,7 +12,8 @@ test('authenticates users and provides protected document, accounting, and media
   const app = createApp({
     databasePath: path.join(dataDir, 'test.sqlite'),
     storagePath: path.join(dataDir, 'uploads'),
-    tokenSecret: 'test-only-token-secret-long-enough'
+    tokenSecret: 'test-only-token-secret-long-enough',
+    initialAdminSetupKey: 'test-only-initial-admin-key-long-enough'
   });
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
@@ -36,32 +37,63 @@ test('authenticates users and provides protected document, accounting, and media
   assert.match(status.headers.get('content-security-policy'), /img-src 'self' data: blob:;/);
   assert.equal((await request('/api/documents')).status, 401);
   assert.equal((await request('/api/security/summary')).status, 401);
+  assert.equal((await request('/api/security/procedures')).status, 401);
 
   const registration = await request('/api/auth/register', json('POST', {
     username: 'owner',
+    identityNumber: '1000000001',
+    setupKey: 'wrong-key',
     password: 'very-long-test-password'
   }));
-  assert.equal(registration.status, 201);
-  const admin = await registration.json();
+  assert.equal(registration.status, 403);
+  const validRegistration = await request('/api/auth/register', json('POST', {
+    username: 'owner',
+    identityNumber: '1000000001',
+    setupKey: 'test-only-initial-admin-key-long-enough',
+    password: 'very-long-test-password'
+  }));
+  assert.equal(validRegistration.status, 201);
+  const admin = await validRegistration.json();
   assert.equal((await request('/api/auth/register', json('POST', {
     username: 'another',
+    identityNumber: '1000000002',
     password: 'very-long-test-password'
   }))).status, 403);
   assert.equal((await (await request('/api/auth/me', { headers: authHeaders(admin.token) })).json()).role, 'admin');
 
   const createdUser = await request('/api/users', json('POST', {
     username: 'staff',
+    identityNumber: '1000000003',
     password: 'another-long-test-password'
   }, admin.token));
   assert.equal(createdUser.status, 201);
   const user = await createdUser.json();
   assert.equal(user.role, 'staff');
+  assert.equal(user.identity_number, '1000000003');
+  const updatedIdentity = await request(`/api/users/${user.id}/identity`, json('PATCH', {
+    identityNumber: '1000000004'
+  }, admin.token));
+  assert.equal(updatedIdentity.status, 200);
+  assert.equal((await updatedIdentity.json()).identity_number, '1000000004');
+  const oldIdentityLogin = await request('/api/auth/login', json('POST', {
+    identityNumber: '1000000003',
+    password: 'another-long-test-password'
+  }));
+  assert.equal(oldIdentityLogin.status, 401);
   const login = await request('/api/auth/login', json('POST', {
-    username: 'staff',
+    identityNumber: '1000000004',
     password: 'another-long-test-password'
   }));
   const staff = await login.json();
   assert.equal((await request('/api/users', { headers: authHeaders(staff.token) })).status, 403);
+  assert.equal((await request(`/api/users/${user.id}/identity`, json('PATCH', {
+    identityNumber: '1000000005'
+  }, staff.token))).status, 403);
+  assert.equal((await request('/api/users', json('POST', {
+    username: 'duplicate',
+    identityNumber: '1000000004',
+    password: 'another-long-test-password'
+  }, admin.token))).status, 409);
 
   const analyzed = await request('/api/documents/analyze', json('POST', {
     title: 'عقد تجريبي',
@@ -223,6 +255,29 @@ test('authenticates users and provides protected document, accounting, and media
     headers: authHeaders(staff.token)
   })).status, 200);
 
+  const procedureForm = new FormData();
+  procedureForm.append('title', 'جولة صباحية');
+  procedureForm.append('category', 'جولة تفقدية');
+  procedureForm.append('location', 'البوابة الرئيسية');
+  procedureForm.append('details', 'تم التأكد من سلامة المدخل.');
+  procedureForm.append('procedurePhoto', new Blob(['daily check image'], { type: 'image/png' }), 'daily.png');
+  const procedureResponse = await request('/api/security/procedures', {
+    method: 'POST',
+    headers: authHeaders(staff.token),
+    body: procedureForm
+  });
+  assert.equal(procedureResponse.status, 201);
+  const procedure = await procedureResponse.json();
+  assert.equal(procedure.created_by_name, 'staff');
+  const procedures = await (await request('/api/security/procedures', {
+    headers: authHeaders(staff.token)
+  })).json();
+  assert.equal(procedures[0].title, 'جولة صباحية');
+  assert.equal((await request(`/api/media/${procedure.media_id}`, {
+    method: 'DELETE',
+    headers: authHeaders(staff.token)
+  })).status, 409);
+
   let limitedResponse;
   for (let i = 0; i < 300; i += 1) limitedResponse = await request('/api/health');
   assert.equal(limitedResponse.status, 429);
@@ -234,6 +289,7 @@ test('trusted proxy client IPs have independent login limits', async (t) => {
     databasePath: path.join(dataDir, 'test.sqlite'),
     storagePath: path.join(dataDir, 'uploads'),
     tokenSecret: 'test-only-token-secret-long-enough',
+    initialAdminSetupKey: 'test-only-initial-admin-key-long-enough',
     trustProxy: ['loopback']
   });
   const server = app.listen(0, '127.0.0.1');
@@ -245,7 +301,12 @@ test('trusted proxy client IPs have independent login limits', async (t) => {
   });
 
   const base = `http://127.0.0.1:${server.address().port}`;
-  const credentials = { username: 'owner', password: 'very-long-test-password' };
+  const credentials = {
+    username: 'owner',
+    identityNumber: '2000000001',
+    setupKey: 'test-only-initial-admin-key-long-enough',
+    password: 'very-long-test-password'
+  };
   const registration = await fetch(`${base}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -264,7 +325,7 @@ test('trusted proxy client IPs have independent login limits', async (t) => {
   const otherClient = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.11' },
-    body: JSON.stringify(credentials)
+    body: JSON.stringify({ identityNumber: credentials.identityNumber, password: credentials.password })
   });
   assert.equal(otherClient.status, 200);
 });

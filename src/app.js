@@ -40,8 +40,13 @@ function createApp(options = {}) {
   fs.mkdirSync(storagePath, { recursive: true });
 
   const tokenSecret = options.tokenSecret || process.env.TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
+  const initialAdminSetupKey = options.initialAdminSetupKey || process.env.INITIAL_ADMIN_SETUP_KEY;
   if (process.env.NODE_ENV === 'production' && Buffer.byteLength(tokenSecret) < 32) {
     throw new Error('TOKEN_SECRET must contain at least 32 bytes in production.');
+  }
+  if (process.env.NODE_ENV === 'production' &&
+      (typeof initialAdminSetupKey !== 'string' || Buffer.byteLength(initialAdminSetupKey) < 32)) {
+    throw new Error('Set INITIAL_ADMIN_SETUP_KEY to a random value of at least 32 bytes before starting in production.');
   }
 
   function requireAdmin(req, res, next) {
@@ -56,6 +61,7 @@ function createApp(options = {}) {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
+      identity_number TEXT UNIQUE,
       password_hash TEXT NOT NULL,
       salt TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('admin', 'staff')),
@@ -146,9 +152,23 @@ function createApp(options = {}) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by INTEGER REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS daily_procedures (
+      id INTEGER PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      location TEXT NOT NULL DEFAULT '',
+      details TEXT NOT NULL,
+      media_id INTEGER REFERENCES media(id),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by INTEGER NOT NULL REFERENCES users(id)
+    );
     CREATE INDEX IF NOT EXISTS security_access_status_idx ON security_access(exited_at, id DESC);
     CREATE INDEX IF NOT EXISTS vehicle_permits_expiry_idx ON vehicle_permits(valid_until);
   `);
+  if (!db.pragma('table_info(users)').some((column) => column.name === 'identity_number')) {
+    db.exec('ALTER TABLE users ADD COLUMN identity_number TEXT');
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_identity_number_idx ON users(identity_number) WHERE identity_number IS NOT NULL');
   for (const [table, column] of [
     ['security_access', 'vehicle_id'],
     ['vehicle_permits', 'vehicle_id']
@@ -282,9 +302,20 @@ function createApp(options = {}) {
   });
 
   app.post('/api/auth/register', authRateLimit, (req, res) => {
-    const { username, password } = req.body || {};
+    const { username, identityNumber, password, setupKey } = req.body || {};
+    if (!initialAdminSetupKey) {
+      return res.status(503).json({ error: 'إعداد الحساب الأول غير متاح؛ اطلب من مسؤول الخادم تهيئة المنصة.' });
+    }
+    const providedKey = typeof setupKey === 'string' ? Buffer.from(setupKey) : Buffer.alloc(0);
+    const expectedKey = Buffer.from(initialAdminSetupKey);
+    if (providedKey.length !== expectedKey.length || !crypto.timingSafeEqual(providedKey, expectedKey)) {
+      return res.status(403).json({ error: 'رمز إعداد المسؤول غير صحيح.' });
+    }
     if (typeof username !== 'string' || !/^[\p{L}\p{N}_.-]{3,40}$/u.test(username.trim())) {
-      return res.status(400).json({ error: 'اسم المستخدم يجب أن يتكون من 3 إلى 40 حرفاً أو رقماً.' });
+      return res.status(400).json({ error: 'أدخل اسماً من 3 إلى 40 حرفاً أو رقماً.' });
+    }
+    if (typeof identityNumber !== 'string' || !/^\d{10}$/.test(identityNumber.trim())) {
+      return res.status(400).json({ error: 'رقم الهوية يجب أن يتكون من 10 أرقام.' });
     }
     if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
       return res.status(400).json({ error: 'كلمة المرور يجب أن تتكون من 12 حرفاً على الأقل.' });
@@ -294,23 +325,27 @@ function createApp(options = {}) {
     }
     const salt = crypto.randomBytes(16).toString('hex');
     const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
-    const result = db.prepare('INSERT INTO users (username, password_hash, salt, role) VALUES (?, ?, ?, ?)')
-      .run(username.trim(), passwordHash, salt, 'admin');
+    const result = db.prepare('INSERT INTO users (username, identity_number, password_hash, salt, role) VALUES (?, ?, ?, ?, ?)')
+      .run(username.trim(), identityNumber.trim(), passwordHash, salt, 'admin');
     audit('إنشاء الحساب الأول', { userId: result.lastInsertRowid });
     res.status(201).json({ token: makeToken(result.lastInsertRowid), username: username.trim() });
   });
 
   app.post('/api/auth/login', authRateLimit, (req, res) => {
-    const { username, password } = req.body || {};
-    if (typeof username !== 'string' || typeof password !== 'string') {
-      return res.status(400).json({ error: 'أدخل اسم المستخدم وكلمة المرور.' });
+    const { identityNumber, username, password } = req.body || {};
+    const identifier = typeof identityNumber === 'string' ? identityNumber.trim() : username;
+    if (typeof identifier !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: 'أدخل رقم الهوية وكلمة المرور.' });
     }
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim());
+    const user = db.prepare(`
+      SELECT * FROM users WHERE identity_number = ?
+        OR (identity_number IS NULL AND username = ?)
+    `).get(identifier, identifier);
     const salt = user?.salt || crypto.randomBytes(16).toString('hex');
     const actual = crypto.scryptSync(password, salt, 64);
     const expected = user ? Buffer.from(user.password_hash, 'hex') : Buffer.alloc(64);
     if (!user || !crypto.timingSafeEqual(actual, expected)) {
-      return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
+      return res.status(401).json({ error: 'رقم الهوية أو كلمة المرور غير صحيحة.' });
     }
     res.json({ token: makeToken(user.id), username: user.username });
   });
@@ -322,25 +357,45 @@ function createApp(options = {}) {
   });
 
   app.get('/api/users', requireAuth, requireAdmin, (_req, res) => {
-    res.json(db.prepare('SELECT id, username, role, created_at FROM users ORDER BY id').all());
+    res.json(db.prepare('SELECT id, username, identity_number, role, created_at FROM users ORDER BY id').all());
   });
 
   app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
-    const { username, password, role = 'staff' } = req.body || {};
+    const { username, identityNumber, password, role = 'staff' } = req.body || {};
     if (typeof username !== 'string' || !/^[\p{L}\p{N}_.-]{3,40}$/u.test(username.trim()) ||
+        typeof identityNumber !== 'string' || !/^\d{10}$/.test(identityNumber.trim()) ||
         typeof password !== 'string' || password.length < 12 || password.length > 128 ||
         !['admin', 'staff'].includes(role)) {
-      return res.status(400).json({ error: 'تحقق من اسم المستخدم وكلمة المرور والصلاحية.' });
+      return res.status(400).json({ error: 'تحقق من الاسم ورقم الهوية وكلمة المرور والصلاحية.' });
     }
     const salt = crypto.randomBytes(16).toString('hex');
     const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
     try {
-      const result = db.prepare('INSERT INTO users (username, password_hash, salt, role) VALUES (?, ?, ?, ?)')
-        .run(username.trim(), passwordHash, salt, role);
+      const result = db.prepare('INSERT INTO users (username, identity_number, password_hash, salt, role) VALUES (?, ?, ?, ?, ?)')
+        .run(username.trim(), identityNumber.trim(), passwordHash, salt, role);
       audit('إنشاء مستخدم', { userId: result.lastInsertRowid, role });
-      res.status(201).json(db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(result.lastInsertRowid));
+      res.status(201).json(db.prepare('SELECT id, username, identity_number, role, created_at FROM users WHERE id = ?').get(result.lastInsertRowid));
     } catch (error) {
-      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'اسم المستخدم مستخدم مسبقاً.' });
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'الاسم أو رقم الهوية مسجل مسبقاً.' });
+      throw error;
+    }
+  });
+
+  app.patch('/api/users/:id/identity', requireAuth, requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    const { identityNumber } = req.body || {};
+    if (!Number.isSafeInteger(id) || id < 1 || typeof identityNumber !== 'string' ||
+        !/^\d{10}$/.test(identityNumber.trim())) {
+      return res.status(400).json({ error: 'رقم الهوية يجب أن يتكون من 10 أرقام.' });
+    }
+    try {
+      const result = db.prepare('UPDATE users SET identity_number = ? WHERE id = ?')
+        .run(identityNumber.trim(), id);
+      if (!result.changes) return res.status(404).json({ error: 'المستخدم غير موجود.' });
+      audit('تحديث رقم هوية مستخدم', { userId: id });
+      res.json(db.prepare('SELECT id, username, identity_number, role, created_at FROM users WHERE id = ?').get(id));
+    } catch (error) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'رقم الهوية مسجل مسبقاً.' });
       throw error;
     }
   });
@@ -675,6 +730,76 @@ function createApp(options = {}) {
     }
   });
 
+  const procedurePhotoUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_PERMIT_PHOTO_SIZE, files: 1 },
+    fileFilter: (_req, file, callback) => {
+      const extension = path.extname(file.originalname).toLowerCase();
+      if (!['.jpg', '.jpeg', '.png'].includes(extension) ||
+          !ALLOWED_TYPES[extension]?.includes(file.mimetype)) {
+        return callback(new Error('صورة الإجراء يجب أن تكون JPG أو PNG.'));
+      }
+      callback(null, true);
+    }
+  });
+
+  app.get('/api/security/procedures', requireAuth, (_req, res) => {
+    res.json(db.prepare(`
+      SELECT p.id, p.title, p.category, p.location, p.details, p.created_at,
+        p.created_by, u.username AS created_by_name, m.id AS media_id
+      FROM daily_procedures p
+      JOIN users u ON u.id = p.created_by
+      LEFT JOIN media m ON m.id = p.media_id
+      ORDER BY p.id DESC LIMIT 200
+    `).all());
+  });
+
+  app.post('/api/security/procedures', requireAuth, procedurePhotoUpload.single('procedurePhoto'), (req, res) => {
+    const { title, category, location = '', details } = req.body || {};
+    const validCategories = ['جولة تفقدية', 'فحص تصريح', 'تسليم واستلام', 'إجراء أمني', 'أخرى'];
+    const requiredText = (value, max) =>
+      typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
+    if (!requiredText(title, 150) || !validCategories.includes(category) ||
+        typeof location !== 'string' || location.trim().length > 100 || !requiredText(details, 2000)) {
+      return res.status(400).json({ error: 'أكمل عنوان الإجراء ونوعه وتفاصيله.' });
+    }
+    let savedPhoto;
+    try {
+      if (req.file) savedPhoto = saveSecurityImage(req.file);
+      const createProcedure = db.transaction(() => {
+        let mediaId = null;
+        if (savedPhoto) {
+          const media = db.prepare(`
+            INSERT INTO media (filename, original_name, mime_type, size, category)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(
+            savedPhoto.filename,
+            path.basename(req.file.originalname.replaceAll('\\', '/')).slice(0, 255),
+            req.file.mimetype,
+            req.file.size,
+            'الإجراءات اليومية'
+          );
+          mediaId = media.lastInsertRowid;
+        }
+        const procedure = db.prepare(`
+          INSERT INTO daily_procedures (title, category, location, details, media_id, created_by)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(title.trim(), category, location.trim(), details.trim(), mediaId, req.userId);
+        audit('تسجيل إجراء يومي', { procedureId: procedure.lastInsertRowid, userId: req.userId });
+        return db.prepare(`
+          SELECT p.id, p.title, p.category, p.location, p.details, p.created_at,
+            p.created_by, u.username AS created_by_name, m.id AS media_id
+          FROM daily_procedures p JOIN users u ON u.id = p.created_by
+          LEFT JOIN media m ON m.id = p.media_id WHERE p.id = ?
+        `).get(procedure.lastInsertRowid);
+      });
+      res.status(201).json(createProcedure());
+    } catch (error) {
+      if (savedPhoto) fs.rmSync(savedPhoto.path, { force: true });
+      throw error;
+    }
+  });
+
   app.get('/api/documents', requireAuth, (_req, res) => {
     const documents = db.prepare('SELECT id, title, analysis_json, created_at FROM documents ORDER BY id DESC').all()
       .map((document) => ({ ...document, analysis: JSON.parse(document.analysis_json) }));
@@ -847,7 +972,8 @@ function createApp(options = {}) {
     if (db.prepare(`
       SELECT 1 FROM vehicle_permits WHERE media_id = ?
       UNION ALL SELECT 1 FROM security_reports WHERE media_id = ?
-    `).get(file.id, file.id)) {
+      UNION ALL SELECT 1 FROM daily_procedures WHERE media_id = ?
+    `).get(file.id, file.id, file.id)) {
       return res.status(409).json({ error: 'لا يمكن حذف صورة مرتبطة بتصريح أو تقرير أمني.' });
     }
     db.prepare('DELETE FROM media WHERE id = ?').run(file.id);
@@ -864,14 +990,15 @@ function createApp(options = {}) {
   app.use(express.static(path.resolve(__dirname, '../public')));
   app.use((error, _req, res, _next) => {
     if (error instanceof multer.MulterError) {
-      const maxSize = ['permitPhoto', 'reportPhoto'].includes(error.field) ? '10 ميجابايت' : '100 ميجابايت';
+      const maxSize = ['permitPhoto', 'reportPhoto', 'procedurePhoto'].includes(error.field) ? '10 ميجابايت' : '100 ميجابايت';
       const message = error.code === 'LIMIT_FILE_SIZE' ? `حجم الملف يتجاوز الحد الأقصى (${maxSize}).` : 'تعذر رفع الملف.';
       return res.status(400).json({ error: message });
     }
     if ([
       'نوع الملف غير مدعوم أو لا يطابق امتداده.',
       'صورة التصريح يجب أن تكون JPG أو PNG.',
-      'صورة التقرير يجب أن تكون JPG أو PNG.'
+      'صورة التقرير يجب أن تكون JPG أو PNG.',
+      'صورة الإجراء يجب أن تكون JPG أو PNG.'
     ].includes(error.message)) {
       return res.status(400).json({ error: error.message });
     }

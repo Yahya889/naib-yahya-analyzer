@@ -12,16 +12,18 @@
 ```sh
 npm install
 export TOKEN_SECRET="$(node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))")"
+export INITIAL_ADMIN_SETUP_KEY="$(node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))")"
 npm start
 ```
 
 افتح [http://localhost:3000](http://localhost:3000). للتطوير استخدم `npm run dev`، ولتشغيل الاختبارات `npm test`.
 
-أول حساب يتم إنشاؤه من شاشة تسجيل الدخول يصبح مسؤول النظام؛ اختر كلمة مرور لا تقل عن 12 حرفاً. بعد الإعداد، يستطيع المسؤول إضافة مستخدمين من قسم «المستخدمون والصلاحيات». لا توجد كلمات مرور افتراضية.
+أول حساب يُنشأ من شاشة الدخول يصبح مسؤول النظام ويحتاج إلى اسم ورقم هوية من 10 أرقام وكلمة مرور لا تقل عن 12 حرفاً ورمز `INITIAL_ADMIN_SETUP_KEY` الذي يضبطه مدير الخادم ويسلمه للمسؤول الأول بأمان. لا يمكن إكمال التهيئة دون الرمز. بعد إنشاء المسؤول، يتوقف التسجيل الأولي ولا يستطيع دخول المنصة إلا أصحاب الحسابات التي ينشئها المسؤول؛ لا يوجد تسجيل عام أو كلمة مرور افتراضية. يمكن للمسؤول ربط أرقام الهوية بحسابات قديمة من قسم المستخدمين. سجلات الإجراءات اليومية والتصاريح والصور تتطلب تسجيل الدخول وتحفظ اسم المستخدم الذي أضافها.
 
 للنشر:
 
 - اضبط `TOKEN_SECRET` عشوائياً وبطول 32 بايت على الأقل، و`NODE_ENV=production`.
+- استخدم HTTPS دائماً، واحصر الشبكة والخادم في المستخدمين المصرّح لهم. تُخزّن كلمات المرور على شكل تجزئة scrypt، وتُحمى محاولات الدخول بحد للمعدل. رقم الهوية بيانات شخصية؛ قيّد صلاحية الوصول إلى قاعدة البيانات والنسخ الاحتياطية.
 - تُحدّ طلبات API إلى 300 طلب في الدقيقة لكل عنوان IP، ومحاولات الدخول الفاشلة إلى 10 محاولات خلال 15 دقيقة. تنظيف حدود محاولات الدخول تلقائي ومخزنها داخل الذاكرة؛ استخدم مخزناً مشتركاً قبل التوسع إلى عدة نسخ من التطبيق.
 - ضع التطبيق خلف HTTPS، وقيّد الوصول إلى الخادم ونظام الملفات.
 - إذا كان التطبيق خلف وكيل عكسي، اضبط `TRUST_PROXY` على عناوين IP أو نطاقات CIDR للوكيل الموثوق فقط، مفصولة بفواصل (مثال: `TRUST_PROXY=loopback,10.0.0.0/8`). لا تثق بكل الوكلاء عشوائياً؛ تحقق من أن الوكيل يستبدل ترويسات `X-Forwarded-*`.
@@ -47,9 +49,9 @@ npm start
 | --- | --- |
 | `GET /api/health` | فحص الخدمة |
 | `GET /api/auth/status` | معرفة ما إذا أُنشئ الحساب الأول |
-| `POST /api/auth/register` | إنشاء الحساب الأول فقط (`username`, `password`) |
-| `POST /api/auth/login`، `GET /api/auth/me` | تسجيل الدخول وبيانات الحساب |
-| `GET/POST /api/users` | عرض المستخدمين وإنشاؤهم (للمسؤول فقط) |
+| `POST /api/auth/register` | إنشاء الحساب الأول فقط (`username`, `identityNumber` من 10 أرقام, `password`, `setupKey`) |
+| `POST /api/auth/login`، `GET /api/auth/me` | تسجيل الدخول برقم الهوية وكلمة المرور وبيانات الحساب |
+| `GET/POST /api/users`، `PATCH /api/users/:id/identity` | عرض المستخدمين وإنشاؤهم (الاسم ورقم الهوية وكلمة المرور) وربط هوية الحسابات القديمة (للمسؤول فقط) |
 | `GET /api/documents`، `POST /api/documents/analyze` | عرض المستندات وفحص نص (`title`, `content`) |
 | `GET/DELETE /api/documents/:id` | تقرير JSON أو حذف مستند |
 | `GET/POST /api/accounting/transactions` | عرض الحركات أو إضافة حركة (`kind`, `description`, `amount`, `date`, `currency`) |
@@ -61,6 +63,7 @@ npm start
 | `GET /api/security/vehicles?plate=...` | الاستعلام برقم لوحة المركبة أو رمزها وعرض الرمز الثابت والتصاريح وسجل الزيارات |
 | `GET/POST /api/security/permits` | عرض التصاريح أو إضافة تصريح مركبة كـ`multipart/form-data`؛ يتضمن `permitNumber`, `vehiclePlate`, بيانات السائق، `validFrom`, `validUntil` وصورة `permitPhoto` بصيغة JPG/PNG حتى 10 ميجابايت |
 | `GET/POST /api/security/reports` | عرض التقارير الأمنية أو إضافة تقرير (`title`, `category`, `location`, `details`) مع صورة `reportPhoto` بصيغة JPG/PNG حتى 10 ميجابايت |
+| `GET/POST /api/security/procedures` | عرض سجل الإجراءات اليومية أو إضافة إجراء باسم المستخدم الحالي؛ صورة `procedurePhoto` اختيارية بصيغة JPG/PNG حتى 10 ميجابايت |
 | `GET/POST /api/media` | عرض الملفات أو رفع `multipart/form-data` باسم الحقل `file` |
 | `GET /api/media/:id`، `GET /api/media/:id/preview`، `DELETE /api/media/:id` | تنزيل أو معاينة صورة أو حذف ملف |
 | `GET /api/audit` | أحدث 100 عملية مسجلة |
