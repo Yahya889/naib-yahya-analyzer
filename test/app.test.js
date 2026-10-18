@@ -54,6 +54,31 @@ test('authenticates users and provides protected document, accounting, and media
   }));
   assert.equal(validRegistration.status, 201);
   const admin = await validRegistration.json();
+  assert.equal((await request('/api/organization')).status, 401);
+  const defaultOrganization = await request('/api/organization', {
+    headers: authHeaders(admin.token)
+  });
+  const defaultOrganizationData = await defaultOrganization.json();
+  assert.deepEqual({
+    organization_name: defaultOrganizationData.organization_name,
+    work_location: defaultOrganizationData.work_location
+  }, {
+    organization_name: 'المربع الجديد',
+    work_location: 'شمال الرياض'
+  });
+  assert.ok(defaultOrganizationData.updated_at);
+  assert.equal((await request('/api/organization', json('PUT', {
+    organizationName: 'المربع الجديد',
+    workLocation: 'شمال الرياض'
+  }))).status, 401);
+  assert.equal((await request('/api/organization', json('PUT', {
+    organizationName: 'المربع الجديد',
+    workLocation: 'شمال الرياض'
+  }, admin.token))).status, 200);
+  assert.equal((await request('/api/organization', json('PUT', {
+    organizationName: '',
+    workLocation: 'مكان'
+  }, admin.token))).status, 400);
   assert.equal((await request('/api/auth/register', json('POST', {
     username: 'Another User',
     ownerLoginId: 'another-owner-23',
@@ -105,6 +130,13 @@ test('authenticates users and provides protected document, accounting, and media
     password: 'another-long-test-password'
   }));
   const staff = await login.json();
+  assert.equal((await request('/api/organization', {
+    headers: authHeaders(staff.token)
+  })).status, 200);
+  assert.equal((await request('/api/organization', json('PUT', {
+    organizationName: 'تعديل موظف',
+    workLocation: 'موقع غير مصرح'
+  }, staff.token))).status, 403);
   assert.equal((await request('/api/users', { headers: authHeaders(staff.token) })).status, 403);
   assert.equal((await request(`/api/users/${user.id}/identity`, json('PATCH', {
     identityNumber: '1000000005'

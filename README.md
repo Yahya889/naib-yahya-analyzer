@@ -61,6 +61,7 @@ npm start
 | `GET /api/auth/status` | معرفة ما إذا أُنشئ الحساب الأول |
 | `POST /api/auth/register` | إنشاء حساب المالك الأول فقط (`username` الاسم الكامل, `ownerLoginId`, `password`, `setupKey`) |
 | `POST /api/auth/login`، `GET /api/auth/me` | تسجيل الدخول بمعرف المالك أو رقم هوية الموظف مع كلمة المرور وبيانات الحساب |
+| `GET/PUT /api/organization` | عرض اسم الجهة وموقع العمل للمستخدم المسجل؛ التعديل للمسؤول فقط (`organizationName`, `workLocation`). القيم الأولية: المربع الجديد، شمال الرياض |
 | `GET/POST /api/users`، `PATCH /api/users/:id/identity`, `PATCH /api/users/:id/owner-login` | عرض المستخدمين وإضافتهم وربط هوية الموظف أو ضبط معرف دخول المالك (للمسؤول فقط) |
 | `GET /api/documents`، `POST /api/documents/analyze` | عرض المستندات وفحص نص (`title`, `content`) |
 | `GET/DELETE /api/documents/:id` | تقرير JSON أو حذف مستند |
