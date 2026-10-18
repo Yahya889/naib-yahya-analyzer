@@ -200,11 +200,14 @@ footer { display: flex; justify-content: space-between; gap: 10px; padding: 24px
   .sidebar { position: sticky; inset: 0 0 auto; width: 100%; height: auto; padding: 9px 12px; }
   .brand { margin: 0 4px 9px; font-size: 14px; }
   .brand-mark { flex-basis: 36px; width: 36px; height: 36px; border-radius: 11px; }
-  .brand small, .sidebar-bottom { display: none; }
+  .brand small { display: none; }
   .sidebar nav { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
   .sidebar nav a { flex: 0 0 auto; gap: 5px; padding: 7px 9px; font-size: 10px; }
   .sidebar nav a span { width: auto; font-size: 14px; }
   .sidebar nav a.active { box-shadow: inset 0 -2px #74b58e; }
+  .sidebar-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 7px; padding: 7px 4px 0; }
+  .user-label { min-width: 0; overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
+  .logout-button { width: auto; flex: 0 0 auto; }
   .main-content { min-height: auto; margin: 0; padding: 18px 13px 12px; }
   .topbar { margin-bottom: 18px; }
   .topbar h1 { font-size: 19px; }
@@ -214,9 +217,11 @@ footer { display: flex; justify-content: space-between; gap: 10px; padding: 24px
   .welcome-panel .button { min-height: 37px; font-size: 11px; }
   .metric-card { min-height: 100px; padding: 13px; }
   .metric-card strong { font-size: 21px; }
+  .metrics.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics.compact > :last-child:nth-child(odd) { grid-column: 1 / -1; }
   .two-column { grid-template-columns: 1fr; }
   .panel { padding: 15px; }
-  .chart { gap: 3px; }
+  .chart { grid-template-columns: repeat(12, minmax(24px, 1fr)); gap: 3px; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
   .chart-month { font-size: 8px; }
   .bar { width: 7px; }
   .section-intro { align-items: start; flex-direction: column; }
@@ -235,6 +240,26 @@ footer { display: flex; justify-content: space-between; gap: 10px; padding: 24px
   .report-photo { width: 85px; height: 75px; }
   .vehicle-lookup-form { grid-template-columns: 1fr; }
   footer { flex-direction: column; }
+}
+@media (max-width: 480px) {
+  .main-content { padding-inline: 10px; }
+  .page { gap: 14px; }
+  .topbar { align-items: start; gap: 8px; }
+  .secure-badge { max-width: 48%; overflow-wrap: anywhere; }
+  .metrics, .metrics.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .metric-card { min-width: 0; padding: 11px; }
+  .metric-card span { font-size: 11px; }
+  .metric-card strong { font-size: 19px; }
+  .form-grid, .user-form .form-grid, .security-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .panel-heading { flex-direction: column; }
+  .panel-heading > div { min-width: 0; }
+  .panel-heading > input, .search-input { width: 100%; max-width: none; font-size: 16px; }
+  .security-filters { width: 100%; }
+  .security-filters select { width: 100%; }
+  .list-row { align-items: start; gap: 8px; }
+  .list-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .report-card { grid-template-columns: 72px minmax(0, 1fr); }
+  .report-photo { width: 72px; }
 }
 @media print {
   .sidebar, .topbar, .button, .toast, footer { display: none !important; }
