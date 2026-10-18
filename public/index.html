@@ -30,7 +30,7 @@
 
     <div id="app-view" class="app-shell" hidden>
       <aside class="sidebar">
-        <a class="brand" href="#dashboard"><span class="brand-mark">ن</span><span>نائب<small>إدارة الأعمال</small></span></a>
+        <a class="brand" href="#dashboard"><span class="brand-mark">ن</span><span>نائب<small id="brand-subtitle">إدارة الأعمال</small></span></a>
         <nav aria-label="القائمة الرئيسية">
           <a href="#dashboard" data-page="dashboard" class="active"><span>⌂</span> الرئيسية</a>
           <a href="#security" data-page="security"><span>▣</span> أمن الموقع</a>
@@ -50,7 +50,7 @@
       <main class="main-content">
         <header class="topbar">
           <div><p class="eyebrow">مساحة العمل</p><h1 id="page-title">الرئيسية</h1></div>
-          <span class="secure-badge"><span></span> مساحة آمنة</span>
+          <span class="secure-badge"><span></span><span id="work-location-label">مساحة آمنة</span></span>
         </header>
         <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
@@ -204,6 +204,14 @@
 
         <section class="page" id="page-users" hidden>
           <div class="section-intro"><div><p class="eyebrow">إدارة الوصول</p><h2>المستخدمون والصلاحيات</h2><p>الحساب الأول مسؤول النظام، ويمكنه إضافة مستخدمين بصلاحيات محدودة أو إدارية.</p></div></div>
+          <form id="organization-form" class="panel organization-form" hidden>
+            <div class="panel-heading"><div><h2>بيانات الجهة وموقع العمل</h2><p>تظهر هذه البيانات للمستخدمين بعد تسجيل الدخول.</p></div></div>
+            <div class="form-grid">
+              <label>اسم الجهة<input name="organizationName" maxlength="120" required></label>
+              <label>موقع العمل<input name="workLocation" maxlength="200" required></label>
+            </div>
+            <button class="button primary form-submit" type="submit">حفظ بيانات الجهة</button>
+          </form>
           <form id="user-form" class="panel user-form">
             <div class="panel-heading"><div><h2>إضافة مستخدم</h2><p>استخدم كلمة مرور طويلة وفريدة.</p></div></div>
             <div class="form-grid">            <label>الاسم الكامل<input name="username" minlength="3" maxlength="80" required></label><label>رقم الهوية (10 أرقام)<input name="identityNumber" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required></label><label>كلمة المرور<input name="password" type="password" minlength="12" maxlength="128" required></label><label>الصلاحية<select name="role"><option value="staff">مستخدم</option><option value="admin">مسؤول</option></select></label></div>
@@ -216,7 +224,7 @@
           <div class="section-intro"><div><p class="eyebrow">متابعة النظام</p><h2>سجل العمليات</h2><p>آخر 100 عملية محفوظة في سجل التدقيق.</p></div></div>
           <div id="activity-list" class="panel list"></div>
         </section>
-        <footer>نائب · إدارة أعمالك بمسؤولية <span>البيانات محفوظة على خادمك</span></footer>
+        <footer><span id="organization-footer">نائب · إدارة أعمالك بمسؤولية</span><span>البيانات محفوظة على خادمك</span></footer>
       </main>
     </div>
   </body>

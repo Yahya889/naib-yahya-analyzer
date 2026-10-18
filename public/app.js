@@ -122,6 +122,8 @@ async function enterApp() {
     appView.hidden = false;
     document.querySelector('#user-label').textContent = currentUser.username;
     document.querySelector('#users-link').hidden = currentUser.role !== 'admin';
+    document.querySelector('#organization-form').hidden = currentUser.role !== 'admin';
+    await loadOrganizationProfile();
     if (location.hash === '#users' && currentUser.role !== 'admin') location.hash = '#dashboard';
     await navigate();
   } catch {
@@ -153,6 +155,37 @@ function logout(showMessage = true) {
 }
 
 document.querySelector('#logout-button').addEventListener('click', () => logout());
+
+document.querySelector('#organization-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const profile = await api('/api/organization', {
+      method: 'PUT',
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    renderOrganizationProfile(profile);
+    showToast('تم حفظ اسم الجهة وموقع العمل.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
+async function loadOrganizationProfile() {
+  try {
+    renderOrganizationProfile(await api('/api/organization'));
+  } catch (error) { showToast(error.message); }
+}
+
+function renderOrganizationProfile(profile) {
+  document.querySelector('#brand-subtitle').textContent = profile.organization_name;
+  document.querySelector('#work-location-label').textContent = profile.work_location;
+  document.querySelector('#organization-footer').textContent = `${profile.organization_name} · ${profile.work_location}`;
+  const form = document.querySelector('#organization-form');
+  form.elements.organizationName.value = profile.organization_name;
+  form.elements.workLocation.value = profile.work_location;
+}
 
 async function navigate() {
   if (!currentUser) return;

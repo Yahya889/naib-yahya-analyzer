@@ -173,6 +173,13 @@ function createApp(options = {}) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       user_id INTEGER NOT NULL REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS organization_profile (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      organization_name TEXT NOT NULL,
+      work_location TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by INTEGER REFERENCES users(id)
+    );
     CREATE INDEX IF NOT EXISTS security_access_status_idx ON security_access(exited_at, id DESC);
     CREATE INDEX IF NOT EXISTS vehicle_permits_expiry_idx ON vehicle_permits(valid_until);
   `);
@@ -183,6 +190,10 @@ function createApp(options = {}) {
     db.exec('ALTER TABLE users ADD COLUMN owner_login_id TEXT');
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_identity_number_idx ON users(identity_number) WHERE identity_number IS NOT NULL');
+  db.prepare(`
+    INSERT OR IGNORE INTO organization_profile (id, organization_name, work_location)
+    VALUES (1, 'المربع الجديد', 'شمال الرياض')
+  `).run();
   for (const [table, column] of [
     ['security_access', 'vehicle_id'],
     ['security_access', 'vehicle_photo_media_id'],
@@ -385,6 +396,31 @@ function createApp(options = {}) {
     const user = db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(req.userId);
     if (!user) return res.status(401).json({ error: 'الحساب غير موجود.' });
     res.json(user);
+  });
+
+  app.get('/api/organization', requireAuth, (_req, res) => {
+    res.json(db.prepare(`
+      SELECT organization_name, work_location, updated_at
+      FROM organization_profile WHERE id = 1
+    `).get());
+  });
+
+  app.put('/api/organization', requireAuth, requireAdmin, (req, res) => {
+    const { organizationName, workLocation } = req.body || {};
+    if (typeof organizationName !== 'string' || !organizationName.trim() || organizationName.trim().length > 120 ||
+        typeof workLocation !== 'string' || !workLocation.trim() || workLocation.trim().length > 200) {
+      return res.status(400).json({ error: 'أدخل اسم الجهة وموقع العمل (بحد أقصى 120 و200 حرف).'});
+    }
+    db.prepare(`
+      UPDATE organization_profile
+      SET organization_name = ?, work_location = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ?
+      WHERE id = 1
+    `).run(organizationName.trim(), workLocation.trim(), req.userId);
+    audit('تحديث اسم الجهة وموقع العمل', { userId: req.userId });
+    res.json(db.prepare(`
+      SELECT organization_name, work_location, updated_at
+      FROM organization_profile WHERE id = 1
+    `).get());
   });
 
   app.get('/api/users', requireAuth, requireAdmin, (_req, res) => {
