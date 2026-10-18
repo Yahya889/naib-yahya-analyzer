@@ -128,6 +128,16 @@ function createApp(options = {}) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by INTEGER REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS security_reports (
+      id INTEGER PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      location TEXT NOT NULL DEFAULT '',
+      details TEXT NOT NULL,
+      media_id INTEGER NOT NULL REFERENCES media(id),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by INTEGER REFERENCES users(id)
+    );
     CREATE INDEX IF NOT EXISTS security_access_status_idx ON security_access(exited_at, id DESC);
     CREATE INDEX IF NOT EXISTS vehicle_permits_expiry_idx ON vehicle_permits(valid_until);
   `);
@@ -435,6 +445,44 @@ function createApp(options = {}) {
     res.json(permits);
   });
 
+  app.get('/api/security/vehicles', requireAuth, (req, res) => {
+    const plate = typeof req.query.plate === 'string' ? req.query.plate.trim().toUpperCase() : '';
+    if (!plate || plate.length > 30) {
+      return res.status(400).json({ error: 'أدخل رقم لوحة صحيحاً للاستعلام.' });
+    }
+    const permits = db.prepare(`
+      SELECT id, permit_number, vehicle_plate, driver_name, identity_number, phone,
+        organization, purpose, valid_from, valid_until, media_id, created_at,
+        CASE WHEN valid_from > date('now') THEN 'upcoming'
+          WHEN valid_until < date('now') THEN 'expired'
+          WHEN valid_until <= date('now', '+30 days') THEN 'expiring'
+          ELSE 'active' END AS status
+      FROM vehicle_permits WHERE UPPER(vehicle_plate) = ?
+      ORDER BY valid_until DESC, id DESC LIMIT 100
+    `).all(plate);
+    const access = db.prepare(`
+      SELECT id, person_name, identity_number, phone, organization, purpose, gate,
+        person_count, vehicle_plate, entered_at, exited_at
+      FROM security_access WHERE UPPER(vehicle_plate) = ?
+      ORDER BY id DESC LIMIT 100
+    `).all(plate);
+    if (access.length) {
+      const placeholders = access.map(() => '?').join(',');
+      const members = db.prepare(`
+        SELECT access_id, person_name, identity_number, phone
+        FROM security_access_members WHERE access_id IN (${placeholders}) ORDER BY id
+      `).all(...access.map((record) => record.id));
+      const membersByAccess = new Map();
+      members.forEach((member) => {
+        const list = membersByAccess.get(member.access_id) || [];
+        list.push({ name: member.person_name, identity_number: member.identity_number, phone: member.phone });
+        membersByAccess.set(member.access_id, list);
+      });
+      access.forEach((record) => { record.members = membersByAccess.get(record.id) || []; });
+    }
+    res.json({ plate, permits, access });
+  });
+
   app.post('/api/security/permits', requireAuth, permitPhotoUpload.single('permitPhoto'), (req, res) => {
     const photoPath = req.file ? path.join(storagePath, req.file.filename) : null;
     const {
@@ -493,6 +541,71 @@ function createApp(options = {}) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         return res.status(409).json({ error: 'رقم التصريح مسجل مسبقاً.' });
       }
+      throw error;
+    }
+  });
+
+  const reportPhotoUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, callback) => callback(null, storagePath),
+      filename: (_req, file, callback) => callback(null, `${crypto.randomUUID()}${path.extname(file.originalname).toLowerCase()}`)
+    }),
+    limits: { fileSize: MAX_PERMIT_PHOTO_SIZE, files: 1 },
+    fileFilter: (_req, file, callback) => {
+      const extension = path.extname(file.originalname).toLowerCase();
+      if (!['.jpg', '.jpeg', '.png'].includes(extension) ||
+          !ALLOWED_TYPES[extension]?.includes(file.mimetype)) {
+        return callback(new Error('صورة التقرير يجب أن تكون JPG أو PNG.'));
+      }
+      callback(null, true);
+    }
+  });
+
+  app.get('/api/security/reports', requireAuth, (_req, res) => {
+    res.json(db.prepare(`
+      SELECT r.id, r.title, r.category, r.location, r.details, r.created_at,
+        m.id AS media_id, m.original_name
+      FROM security_reports r JOIN media m ON m.id = r.media_id
+      ORDER BY r.id DESC LIMIT 100
+    `).all());
+  });
+
+  app.post('/api/security/reports', requireAuth, reportPhotoUpload.single('reportPhoto'), (req, res) => {
+    const photoPath = req.file ? path.join(storagePath, req.file.filename) : null;
+    const { title, category, location = '', details } = req.body || {};
+    const validCategories = ['بلاغ ميداني', 'حادث', 'مخالفة', 'ملاحظة'];
+    const requiredText = (value, max) =>
+      typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
+    if (!req.file || !requiredText(title, 150) || !validCategories.includes(category) ||
+        typeof location !== 'string' || location.trim().length > 100 || !requiredText(details, 2000)) {
+      if (photoPath) fs.rmSync(photoPath, { force: true });
+      return res.status(400).json({ error: 'أكمل عنوان التقرير ونوعه وتفاصيله وأرفق صورة JPG أو PNG.' });
+    }
+    try {
+      const createReport = db.transaction(() => {
+        const mediaResult = db.prepare(`
+          INSERT INTO media (filename, original_name, mime_type, size, category)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(
+          req.file.filename,
+          path.basename(req.file.originalname.replaceAll('\\', '/')).slice(0, 255),
+          req.file.mimetype,
+          req.file.size,
+          'تقارير أمن الموقع'
+        );
+        const reportResult = db.prepare(`
+          INSERT INTO security_reports (title, category, location, details, media_id, created_by)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(title.trim(), category, location.trim(), details.trim(), mediaResult.lastInsertRowid, req.userId);
+        audit('إضافة تقرير أمني', { reportId: reportResult.lastInsertRowid });
+        return db.prepare(`
+          SELECT r.id, r.title, r.category, r.location, r.details, r.created_at, m.id AS media_id
+          FROM security_reports r JOIN media m ON m.id = r.media_id WHERE r.id = ?
+        `).get(reportResult.lastInsertRowid);
+      });
+      res.status(201).json(createReport());
+    } catch (error) {
+      if (photoPath) fs.rmSync(photoPath, { force: true });
       throw error;
     }
   });
@@ -666,8 +779,11 @@ function createApp(options = {}) {
   app.delete('/api/media/:id', requireAuth, (req, res) => {
     const file = db.prepare('SELECT * FROM media WHERE id = ?').get(Number(req.params.id));
     if (!file) return res.status(404).json({ error: 'الملف غير موجود.' });
-    if (db.prepare('SELECT 1 FROM vehicle_permits WHERE media_id = ?').get(file.id)) {
-      return res.status(409).json({ error: 'لا يمكن حذف صورة مرتبطة بتصريح مركبة.' });
+    if (db.prepare(`
+      SELECT 1 FROM vehicle_permits WHERE media_id = ?
+      UNION ALL SELECT 1 FROM security_reports WHERE media_id = ?
+    `).get(file.id, file.id)) {
+      return res.status(409).json({ error: 'لا يمكن حذف صورة مرتبطة بتصريح أو تقرير أمني.' });
     }
     db.prepare('DELETE FROM media WHERE id = ?').run(file.id);
     fs.rmSync(path.join(storagePath, file.filename), { force: true });
@@ -683,11 +799,15 @@ function createApp(options = {}) {
   app.use(express.static(path.resolve(__dirname, '../public')));
   app.use((error, _req, res, _next) => {
     if (error instanceof multer.MulterError) {
-      const maxSize = error.field === 'permitPhoto' ? '10 ميجابايت' : '100 ميجابايت';
+      const maxSize = ['permitPhoto', 'reportPhoto'].includes(error.field) ? '10 ميجابايت' : '100 ميجابايت';
       const message = error.code === 'LIMIT_FILE_SIZE' ? `حجم الملف يتجاوز الحد الأقصى (${maxSize}).` : 'تعذر رفع الملف.';
       return res.status(400).json({ error: message });
     }
-    if (['نوع الملف غير مدعوم أو لا يطابق امتداده.', 'صورة التصريح يجب أن تكون JPG أو PNG.'].includes(error.message)) {
+    if ([
+      'نوع الملف غير مدعوم أو لا يطابق امتداده.',
+      'صورة التصريح يجب أن تكون JPG أو PNG.',
+      'صورة التقرير يجب أن تكون JPG أو PNG.'
+    ].includes(error.message)) {
       return res.status(400).json({ error: error.message });
     }
     console.error(error);
