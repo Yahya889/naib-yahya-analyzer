@@ -1,7 +1,15 @@
 const tokenKey = 'naib-session';
 const labels = { income: 'إيراد', expense: 'مصروف', purchase: 'مشتريات', admin: 'مسؤول', staff: 'مستخدم' };
+const permitStatusLabels = {
+  active: 'ساري',
+  upcoming: 'لم يبدأ بعد',
+  expiring: 'ينتهي خلال 30 يوماً',
+  expired: 'منتهي'
+};
 const pages = {
   dashboard: 'الرئيسية',
+  security: 'أمن الموقع',
+  requests: 'طلبات الإضافة والتحسين',
   documents: 'تحليل المستندات',
   accounting: 'المحاسبة المالية',
   media: 'الوسائط والملفات',
@@ -67,15 +75,33 @@ async function checkSetup() {
 
 setupButton.addEventListener('click', () => {
   registering = !registering;
+  const nameField = document.querySelector('#account-name-field');
+  const setupKeyField = document.querySelector('#setup-key-field');
+  nameField.hidden = !registering;
+  nameField.querySelector('input').required = registering;
+  setupKeyField.hidden = !registering;
+  setupKeyField.querySelector('input').required = registering;
+  document.querySelector('#access-notice').hidden = registering;
+  const loginIdInput = authForm.querySelector('input[name="loginId"]');
+  loginIdInput.inputMode = registering ? 'text' : 'numeric';
+  loginIdInput.pattern = registering ? '[A-Za-z0-9_.-]{6,32}' : '[0-9]{10}|[A-Za-z0-9_.-]{6,32}';
+  loginIdInput.maxLength = 32;
+  document.querySelector('#login-id-label').firstChild.textContent = registering
+    ? 'معرف المالك الخاص'
+    : 'رقم الهوية أو معرف الدخول';
   authForm.querySelector('button[type="submit"]').textContent = registering ? 'إنشاء الحساب الأول' : 'تسجيل الدخول';
   authForm.querySelector('input[name="password"]').autocomplete = registering ? 'new-password' : 'current-password';
   setupButton.textContent = registering ? 'العودة لتسجيل الدخول' : 'إعداد الحساب الأول';
-  setAuthMessage(registering ? 'الحساب الأول يحصل على صلاحية مسؤول النظام.' : '');
+  setAuthMessage(registering ? 'اختر معرف دخول خاصاً لا يكشف صلاحية حسابك، وأدخل اسمك الكامل.' : '');
 });
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const fields = Object.fromEntries(new FormData(authForm));
+  if (registering) {
+    fields.ownerLoginId = fields.loginId;
+    delete fields.loginId;
+  }
   setAuthMessage('');
   try {
     const result = await api(registering ? '/api/auth/register' : '/api/auth/login', {
@@ -94,8 +120,10 @@ async function enterApp() {
     currentUser = await api('/api/auth/me');
     authView.hidden = true;
     appView.hidden = false;
-    document.querySelector('#user-label').textContent = `${currentUser.username} · ${labels[currentUser.role]}`;
+    document.querySelector('#user-label').textContent = currentUser.username;
     document.querySelector('#users-link').hidden = currentUser.role !== 'admin';
+    document.querySelector('#organization-form').hidden = currentUser.role !== 'admin';
+    await loadOrganizationProfile();
     if (location.hash === '#users' && currentUser.role !== 'admin') location.hash = '#dashboard';
     await navigate();
   } catch {
@@ -111,12 +139,53 @@ function logout(showMessage = true) {
   registering = false;
   authForm.reset();
   authForm.querySelector('button[type="submit"]').textContent = 'تسجيل الدخول';
+  document.querySelector('#account-name-field').hidden = true;
+  document.querySelector('#account-name-field input').required = false;
+  document.querySelector('#setup-key-field').hidden = true;
+  document.querySelector('#setup-key-field input').required = false;
+  const loginIdInput = authForm.querySelector('input[name="loginId"]');
+  loginIdInput.inputMode = 'numeric';
+  loginIdInput.pattern = '[0-9]{10}|[A-Za-z0-9_.-]{6,32}';
+  loginIdInput.maxLength = 32;
+  document.querySelector('#login-id-label').firstChild.textContent = 'رقم الهوية أو معرف الدخول';
+  document.querySelector('#access-notice').hidden = false;
   setupButton.textContent = 'إعداد الحساب الأول';
   if (showMessage) setAuthMessage('تم تسجيل الخروج.');
   checkSetup();
 }
 
 document.querySelector('#logout-button').addEventListener('click', () => logout());
+
+document.querySelector('#organization-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const profile = await api('/api/organization', {
+      method: 'PUT',
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    renderOrganizationProfile(profile);
+    showToast('تم حفظ اسم الجهة وموقع العمل.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
+async function loadOrganizationProfile() {
+  try {
+    renderOrganizationProfile(await api('/api/organization'));
+  } catch (error) { showToast(error.message); }
+}
+
+function renderOrganizationProfile(profile) {
+  document.querySelector('#brand-subtitle').textContent = profile.organization_name;
+  document.querySelector('#work-location-label').textContent = profile.work_location;
+  document.querySelector('#organization-footer').textContent = `${profile.organization_name} · ${profile.work_location}`;
+  const form = document.querySelector('#organization-form');
+  form.elements.organizationName.value = profile.organization_name;
+  form.elements.workLocation.value = profile.work_location;
+}
 
 async function navigate() {
   if (!currentUser) return;
@@ -128,6 +197,8 @@ async function navigate() {
   document.querySelector('#page-title').textContent = pages[page];
   try {
     if (page === 'dashboard') await loadDashboard();
+    if (page === 'security') await loadSecurity();
+    if (page === 'requests') await loadFeatureRequests();
     if (page === 'documents') await loadDocuments();
     if (page === 'accounting') await loadAccounting();
     if (page === 'media') await loadMedia();
@@ -139,6 +210,522 @@ async function navigate() {
 }
 
 window.addEventListener('hashchange', navigate);
+
+document.querySelector('#feature-request-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/feature-requests', {
+      method: 'POST',
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    form.reset();
+    await loadFeatureRequests();
+    showToast('تم إرسال طلبك للمسؤول.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
+document.querySelectorAll('[data-voice-for]').forEach((button) => {
+  button.addEventListener('click', () => dictateInto(button));
+});
+
+function dictateInto(button) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    showToast('الإملاء غير مدعوم هنا. استخدم زر الميكروفون في لوحة مفاتيح الآيفون، ثم راجع النص.');
+    return;
+  }
+  const form = document.getElementById(button.dataset.voiceFor);
+  const target = form?.querySelector('[data-voice-target]');
+  if (!target) return;
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'ar-SA';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  button.disabled = true;
+  button.textContent = 'جارٍ الاستماع…';
+  recognition.onresult = (event) => {
+    const transcript = [...event.results]
+      .filter((result) => result.isFinal)
+      .map((result) => result[0].transcript)
+      .join(' ')
+      .trim();
+    if (transcript) {
+      target.value = `${target.value.trim()}${target.value.trim() ? '\n' : ''}${transcript}`;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
+  recognition.onerror = () => showToast('تعذر التقاط الصوت. تحقق من إذن الميكروفون ثم أعد المحاولة.');
+  recognition.onend = () => {
+    button.disabled = false;
+    button.textContent = '🎙 إملاء صوتي (راجع النص قبل الحفظ)';
+    target.focus();
+  };
+  try { recognition.start(); }
+  catch {
+    button.disabled = false;
+    button.textContent = '🎙 إملاء صوتي (راجع النص قبل الحفظ)';
+    showToast('تعذر بدء الإملاء. استخدم زر الميكروفون بلوحة مفاتيح الهاتف.');
+  }
+}
+
+async function loadFeatureRequests() {
+  const requests = await api('/api/feature-requests');
+  const list = document.querySelector('#feature-request-list');
+  list.replaceChildren();
+  document.querySelector('#request-list-title').textContent =
+    currentUser.role === 'admin' ? 'طلبات الفريق الواردة' : 'طلباتي';
+  if (!requests.length) return appendEmpty(list, 'لا توجد طلبات مسجلة بعد.');
+  requests.forEach((request) => {
+    const row = document.createElement('div');
+    row.className = 'list-row feature-request-row';
+    const details = document.createElement('div');
+    details.className = 'feature-request-details';
+    details.append(
+      textElement('strong', `${request.category} · ${request.requester_name}`),
+      textElement('small', `${formatTimestamp(request.created_at)} · ${request.message}`)
+    );
+    const status = document.createElement('span');
+    status.className = `tag request-status ${request.status === 'مكتمل' ? 'complete' : ''}`;
+    status.textContent = request.status;
+    row.append(details);
+    if (currentUser.role === 'admin') {
+      const statusForm = document.createElement('form');
+      statusForm.className = 'request-status-form';
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', 'تحديث حالة الطلب');
+      for (const value of ['جديد', 'قيد المراجعة', 'مقبول', 'مرفوض', 'مكتمل']) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === request.status;
+        select.append(option);
+      }
+      const update = document.createElement('button');
+      update.type = 'submit';
+      update.className = 'button secondary';
+      update.textContent = 'تحديث';
+      statusForm.append(select, update);
+      statusForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        update.disabled = true;
+        try {
+          await api(`/api/feature-requests/${request.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: select.value })
+          });
+          await loadFeatureRequests();
+          showToast('تم تحديث حالة الطلب.');
+        } catch (error) { showToast(error.message); }
+        finally { update.disabled = false; }
+      });
+      row.append(statusForm);
+    } else {
+      row.append(status);
+    }
+    list.append(row);
+  });
+}
+
+document.querySelector('#access-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  data.delete('personName');
+  data.delete('identityNumber');
+  data.delete('phone');
+  data.set('people', JSON.stringify([...form.querySelectorAll('.access-person')].map((person) => ({
+    name: person.querySelector('[name="personName"]').value,
+    identityNumber: person.querySelector('[name="identityNumber"]').value,
+    phone: person.querySelector('[name="phone"]').value
+  }))));
+  try {
+    await api('/api/security/access', { method: 'POST', body: data });
+    form.reset();
+    document.querySelector('#access-people-list').replaceChildren();
+    addAccessPerson();
+    await loadSecurity();
+    showToast('تم تسجيل دخول المجموعة.');
+  } catch (error) { showToast(error.message); }
+});
+
+document.querySelector('#add-access-person').addEventListener('click', () => addAccessPerson());
+document.querySelector('#access-status').addEventListener('change', loadAccessRecords);
+document.querySelector('#access-search').addEventListener('input', loadAccessRecords);
+
+document.querySelector('#permit-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/security/permits', { method: 'POST', body: new FormData(form) });
+    form.reset();
+    await loadSecurity();
+    showToast('تم حفظ تصريح المركبة وصورته.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
+document.querySelector('#report-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/security/reports', { method: 'POST', body: new FormData(form) });
+    form.reset();
+    await loadReports();
+    showToast('تم حفظ التقرير وصورته.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
+document.querySelector('#procedure-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/security/procedures', { method: 'POST', body: new FormData(form) });
+    form.reset();
+    await loadProcedures();
+    showToast('تم حفظ الإجراء اليومي باسم المستخدم.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
+document.querySelector('#permit-search').addEventListener('input', loadPermits);
+
+document.querySelector('#vehicle-lookup-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const plate = event.currentTarget.elements.plate.value.trim();
+  const result = document.querySelector('#vehicle-lookup-result');
+  result.replaceChildren();
+  try {
+    const vehicle = await api(`/api/security/vehicles?plate=${encodeURIComponent(plate)}`);
+    renderVehicleLookup(vehicle);
+  } catch (error) { showToast(error.message); }
+});
+
+function renderVehicleLookup(vehicle) {
+  const result = document.querySelector('#vehicle-lookup-result');
+  result.replaceChildren();
+  if (!vehicle.vehicle_code) return appendEmpty(result, 'لم يتم العثور على مركبة مسجلة بهذا الرقم.');
+  const heading = document.createElement('div');
+  heading.className = 'vehicle-lookup-heading';
+  heading.append(
+    textElement('strong', `المركبة ${vehicle.plate}`),
+    textElement('span', `الرمز الثابت: ${vehicle.vehicle_code}`)
+  );
+  result.append(heading);
+  if (vehicle.permits.length) {
+    result.append(textElement('h3', 'التصاريح'));
+    vehicle.permits.forEach((permit) => {
+      const card = document.createElement('article');
+      card.className = 'vehicle-lookup-card';
+      card.append(
+        textElement('strong', `${permit.permit_number} · ${permitStatusLabels[permit.status]}`),
+        textElement('span', `السائق: ${permit.driver_name} · الهوية: ${permit.identity_number} · الهاتف: ${permit.phone}`),
+        textElement('span', `الجهة: ${permit.organization || '—'} · الغرض: ${permit.purpose}`),
+        textElement('span', `الصلاحية: ${permit.valid_from} إلى ${permit.valid_until}`)
+      );
+      result.append(card);
+    });
+  }
+  if (vehicle.access.length) {
+    result.append(textElement('h3', 'سجل الدخول'));
+    vehicle.access.forEach((visit) => {
+      const card = document.createElement('article');
+      card.className = 'vehicle-lookup-card';
+      card.append(
+        textElement('strong', `البوابة ${visit.gate} · ${visit.person_count} أشخاص`),
+        textElement('span', `الأشخاص: ${visit.members.map((member) => `${member.name} (${member.identity_number})`).join('، ')}`),
+        textElement('span', `الغرض: ${visit.purpose} · الدخول: ${formatTimestamp(visit.entered_at)} · الخروج: ${visit.exited_at ? formatTimestamp(visit.exited_at) : 'داخل الموقع'}`)
+      );
+      if (visit.vehicle_photo_media_id) {
+        const photo = document.createElement('img');
+        photo.className = 'vehicle-entry-photo';
+        photo.alt = `صورة المركبة ${visit.vehicle_plate}`;
+        loadImagePreview(photo, visit.vehicle_photo_media_id);
+        card.append(photo);
+      }
+      result.append(card);
+    });
+  }
+}
+
+async function loadSecurity() {
+  const [summary] = await Promise.all([
+    api('/api/security/summary'),
+    loadAccessRecords(),
+    loadPermits(),
+    loadReports(),
+    loadProcedures()
+  ]);
+  document.querySelector('#security-inside-count').textContent = formatMoney(summary.people_inside);
+  document.querySelector('#security-active-visits').textContent = formatMoney(summary.active_visits);
+  document.querySelector('#security-expiring-count').textContent = formatMoney(summary.expired_permits + summary.expiring_permits);
+}
+
+async function loadAccessRecords() {
+  const status = document.querySelector('#access-status').value;
+  const search = document.querySelector('#access-search').value;
+  const records = await api(`/api/security/access?status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`);
+  const body = document.querySelector('#access-list');
+  body.replaceChildren();
+  if (!records.length) return appendTableEmpty(body, 7, 'لا توجد سجلات دخول مطابقة.');
+  records.forEach((record) => {
+    const row = document.createElement('tr');
+    const person = document.createElement('td');
+    const memberList = document.createElement('div');
+    memberList.className = 'access-member-list';
+    record.members.forEach((member) => {
+      const details = document.createElement('div');
+      details.append(textElement('strong', member.name), textElement('small', `${member.identity_number} · ${member.phone}`));
+      memberList.append(details);
+    });
+    person.append(memberList);
+    const reason = document.createElement('td');
+    reason.append(textElement('span', record.organization || '—'), textElement('small', record.purpose));
+    const count = document.createElement('td');
+    count.textContent = formatMoney(record.person_count);
+    const gate = document.createElement('td');
+    gate.append(
+      textElement('span', record.gate),
+      textElement('small', record.vehicle_plate ? `${record.vehicle_plate} · ${record.vehicle_code || ''}` : '—')
+    );
+    if (record.vehicle_photo_media_id) {
+      const photo = document.createElement('img');
+      photo.className = 'vehicle-entry-photo';
+      photo.alt = `صورة المركبة ${record.vehicle_plate}`;
+      loadImagePreview(photo, record.vehicle_photo_media_id);
+      gate.append(photo);
+    }
+    const entered = document.createElement('td');
+    entered.textContent = formatTimestamp(record.entered_at);
+    const exited = document.createElement('td');
+    exited.textContent = record.exited_at ? formatTimestamp(record.exited_at) : 'داخل الموقع';
+    const action = document.createElement('td');
+    if (!record.exited_at) {
+      const leave = document.createElement('button');
+      leave.type = 'button';
+      leave.className = 'button secondary table-button';
+      leave.textContent = 'تسجيل الخروج';
+      leave.addEventListener('click', async () => {
+        leave.disabled = true;
+        try {
+          await api(`/api/security/access/${record.id}/exit`, { method: 'POST' });
+          await loadSecurity();
+          showToast('تم تسجيل خروج المجموعة.');
+        } catch (error) { showToast(error.message); }
+      });
+      action.append(leave);
+    }
+
+    function loadImagePreview(image, mediaId) {
+      api(`/api/media/${mediaId}/preview`)
+        .then((blob) => { image.src = URL.createObjectURL(blob); })
+        .catch(() => { image.alt = 'تعذرت معاينة الصورة'; });
+    }
+    row.append(person, reason, count, gate, entered, exited, action);
+    body.append(row);
+  });
+}
+
+function addAccessPerson() {
+  const container = document.querySelector('#access-people-list');
+  if (container.childElementCount >= 200) {
+    showToast('لا يمكن إضافة أكثر من 200 شخص في السجل الواحد.');
+    return;
+  }
+  const person = document.createElement('fieldset');
+  person.className = 'access-person';
+  person.append(textElement('legend', `بيانات الشخص ${container.childElementCount + 1}`));
+  const fields = document.createElement('div');
+  fields.className = 'form-grid security-form-grid';
+  for (const [name, labelText, maxLength, type] of [
+    ['personName', 'الاسم الكامل', 120, 'text'],
+    ['identityNumber', 'رقم الهوية / الموظف', 40, 'text'],
+    ['phone', 'رقم الهاتف', 30, 'tel']
+  ]) {
+    const label = textElement('label', labelText);
+    const input = document.createElement('input');
+    input.name = name;
+    input.type = type;
+    input.maxLength = maxLength;
+    input.required = true;
+    label.append(input);
+    fields.append(label);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'access-person-actions';
+  if (container.childElementCount > 0) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'icon-button';
+    remove.textContent = 'إزالة الشخص';
+    remove.addEventListener('click', () => {
+      person.remove();
+      [...container.children].forEach((entry, index) => {
+        entry.querySelector('legend').textContent = `بيانات الشخص ${index + 1}`;
+      });
+      container.firstElementChild.querySelector('.access-person-actions').replaceChildren();
+    });
+    actions.append(remove);
+  }
+  person.append(fields, actions);
+  container.append(person);
+  if (container.childElementCount === 2) {
+    const firstActions = container.firstElementChild.querySelector('.access-person-actions');
+    const removeFirst = document.createElement('button');
+    removeFirst.type = 'button';
+    removeFirst.className = 'icon-button';
+    removeFirst.textContent = 'إزالة الشخص';
+    removeFirst.addEventListener('click', () => {
+      container.firstElementChild.remove();
+      [...container.children].forEach((entry, index) => {
+        entry.querySelector('legend').textContent = `بيانات الشخص ${index + 1}`;
+      });
+      container.firstElementChild.querySelector('.access-person-actions').replaceChildren();
+    });
+    firstActions.append(removeFirst);
+  }
+}
+
+async function loadPermits() {
+  const search = document.querySelector('#permit-search').value;
+  const permits = await api(`/api/security/permits?search=${encodeURIComponent(search)}`);
+  const body = document.querySelector('#permit-list');
+  body.replaceChildren();
+  const alerts = permits.filter((permit) => permit.status === 'expired' || permit.status === 'expiring');
+  renderPermitAlerts(alerts);
+  if (!permits.length) return appendTableEmpty(body, 7, 'لا توجد تصاريح مركبات مطابقة.');
+  permits.forEach((permit) => {
+    const row = document.createElement('tr');
+    const permitCell = document.createElement('td');
+    const permitDetails = document.createElement('div');
+    permitDetails.className = 'permit-cell';
+    const photo = document.createElement('img');
+    photo.className = 'permit-thumb';
+    photo.alt = `صورة التصريح ${permit.permit_number}`;
+    api(`/api/media/${permit.media_id}/preview`)
+      .then((blob) => { photo.src = URL.createObjectURL(blob); })
+      .catch(() => { photo.alt = 'تعذرت معاينة الصورة'; });
+    const permitNumber = document.createElement('div');
+    permitNumber.append(
+      textElement('strong', permit.permit_number),
+      textElement('small', `رمز المركبة ${permit.vehicle_code || '—'}`)
+    );
+    permitDetails.append(photo, permitNumber);
+    permitCell.append(permitDetails);
+    const driver = document.createElement('td');
+    driver.append(textElement('span', permit.driver_name), textElement('small', permit.organization || '—'));
+    const contact = document.createElement('td');
+    contact.append(textElement('span', permit.identity_number), textElement('small', permit.phone));
+    const details = document.createElement('td');
+    details.append(textElement('span', permit.purpose), textElement('small', permit.organization || '—'));
+    const validity = document.createElement('td');
+    validity.append(textElement('span', permit.valid_until), textElement('small', `من ${permit.valid_from}`));
+    const status = document.createElement('td');
+    const badge = textElement('span', permitStatusLabels[permit.status]);
+    badge.className = `tag permit-status ${permit.status}`;
+    status.append(badge);
+    row.append(permitCell, textElement('td', permit.vehicle_plate), driver, contact, details, validity, status);
+    body.append(row);
+  });
+}
+
+async function loadReports() {
+  const reports = await api('/api/security/reports');
+  const list = document.querySelector('#report-list');
+  list.replaceChildren();
+  if (!reports.length) return appendEmpty(list, 'لا توجد تقارير أمنية محفوظة بعد.');
+  reports.forEach((report) => {
+    const card = document.createElement('article');
+    card.className = 'report-card';
+    const photo = document.createElement('img');
+    photo.className = 'report-photo';
+    photo.alt = `صورة التقرير ${report.title}`;
+    api(`/api/media/${report.media_id}/preview`)
+      .then((blob) => { photo.src = URL.createObjectURL(blob); })
+      .catch(() => { photo.alt = 'تعذرت معاينة صورة التقرير'; });
+    const info = document.createElement('div');
+    info.append(
+      textElement('strong', report.title),
+      textElement('small', `${report.category} · ${report.location || 'الموقع غير محدد'} · ${formatTimestamp(report.created_at)}`),
+      textElement('p', report.details)
+    );
+    card.append(photo, info);
+    list.append(card);
+  });
+}
+
+async function loadProcedures() {
+  const procedures = await api('/api/security/procedures');
+  const list = document.querySelector('#procedure-list');
+  list.replaceChildren();
+  if (!procedures.length) return appendEmpty(list, 'لا توجد إجراءات يومية مسجلة بعد.');
+  procedures.forEach((procedure) => {
+    const card = document.createElement('article');
+    card.className = 'report-card';
+    if (procedure.media_id) {
+      const photo = document.createElement('img');
+      photo.className = 'report-photo';
+      photo.alt = `صورة الإجراء ${procedure.title}`;
+      api(`/api/media/${procedure.media_id}/preview`)
+        .then((blob) => { photo.src = URL.createObjectURL(blob); })
+        .catch(() => { photo.alt = 'تعذرت معاينة الصورة'; });
+      card.append(photo);
+    }
+    const info = document.createElement('div');
+    info.append(
+      textElement('strong', procedure.title),
+      textElement('small', `${procedure.category} · ${procedure.location || 'الموقع غير محدد'} · ${formatTimestamp(procedure.created_at)} · سجله: ${procedure.created_by_name}`),
+      textElement('p', procedure.details)
+    );
+    card.append(info);
+    list.append(card);
+  });
+}
+
+function renderPermitAlerts(permits) {
+  const container = document.querySelector('#permit-alerts');
+  container.replaceChildren();
+  if (!permits.length) return appendEmpty(container, 'لا توجد تصاريح منتهية أو قريبة الانتهاء.');
+  permits.forEach((permit) => {
+    const alert = document.createElement('div');
+    alert.className = `permit-alert ${permit.status}`;
+    alert.append(
+      textElement('strong', `${permitStatusLabels[permit.status]} · ${permit.permit_number}`),
+      textElement('span', `المركبة ${permit.vehicle_plate} · السائق ${permit.driver_name} · تاريخ الانتهاء ${permit.valid_until}`)
+    );
+    container.append(alert);
+  });
+}
+
+function textElement(tagName, text) {
+  const element = document.createElement(tagName);
+  element.textContent = text;
+  return element;
+}
+
+function appendTableEmpty(body, columnCount, message) {
+  const row = document.createElement('tr');
+  const cell = document.createElement('td');
+  cell.colSpan = columnCount;
+  cell.className = 'empty-row';
+  cell.textContent = message;
+  row.append(cell);
+  body.append(row);
+}
+
+function formatTimestamp(timestamp) {
+  return new Date(timestamp.replace(' ', 'T') + 'Z').toLocaleString('ar-SA');
+}
 
 async function loadDashboard() {
   const [summary, documents] = await Promise.all([
@@ -466,13 +1053,85 @@ async function loadUsers() {
     name.textContent = user.username;
     const date = document.createElement('small');
     date.textContent = new Date(user.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('ar-SA');
-    details.append(name, date);
+    const identity = document.createElement('small');
+    const isOwnerAccount = user.id === currentUser.id && user.role === 'admin';
+    identity.textContent = isOwnerAccount
+      ? 'دخول خاص بمعرف المالك'
+      : user.identity_number || 'لم يُربط رقم هوية بعد';
+    details.append(name, identity, date);
+    const identityForm = document.createElement('form');
+    identityForm.className = 'identity-link-form';
+    const identityInput = document.createElement('input');
+    identityInput.name = 'identityNumber';
+    identityInput.inputMode = 'numeric';
+    identityInput.pattern = '[0-9]{10}';
+    identityInput.maxLength = 10;
+    identityInput.placeholder = 'رقم الهوية';
+    identityInput.value = user.identity_number || '';
+    identityInput.required = true;
+    const updateIdentity = document.createElement('button');
+    updateIdentity.type = 'submit';
+    updateIdentity.className = 'button secondary';
+    updateIdentity.textContent = 'حفظ الهوية';
+    identityForm.append(identityInput, updateIdentity);
+    identityForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      updateIdentity.disabled = true;
+      try {
+        await api(`/api/users/${user.id}/identity`, {
+          method: 'PATCH',
+          body: JSON.stringify({ identityNumber: identityInput.value })
+        });
+        await loadUsers();
+        showToast('تم ربط رقم الهوية بالحساب.');
+      } catch (error) { showToast(error.message); }
+      finally { updateIdentity.disabled = false; }
+    });
+    if (isOwnerAccount) {
+      const ownerLoginForm = document.createElement('form');
+      ownerLoginForm.className = 'identity-link-form';
+      const ownerLoginInput = document.createElement('input');
+      ownerLoginInput.name = 'ownerLoginId';
+      ownerLoginInput.pattern = '[A-Za-z0-9_.-]{6,32}';
+      ownerLoginInput.maxLength = 32;
+      ownerLoginInput.autocomplete = 'off';
+      ownerLoginInput.placeholder = user.has_owner_login_id ? 'معرف المالك مضبوط (أدخل للتغيير)' : 'معرف المالك الخاص';
+      ownerLoginInput.required = true;
+      const saveOwnerLogin = document.createElement('button');
+      saveOwnerLogin.type = 'submit';
+      saveOwnerLogin.className = 'button secondary';
+      saveOwnerLogin.textContent = 'حفظ معرف المالك';
+      ownerLoginForm.append(ownerLoginInput, saveOwnerLogin);
+      ownerLoginForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        saveOwnerLogin.disabled = true;
+        try {
+          await api(`/api/users/${user.id}/owner-login`, {
+            method: 'PATCH',
+            body: JSON.stringify({ ownerLoginId: ownerLoginInput.value })
+          });
+          await loadUsers();
+          showToast('تم تحديث معرف المالك الخاص.');
+        } catch (error) { showToast(error.message); }
+        finally { saveOwnerLogin.disabled = false; }
+      });
+      row.append(details, ownerLoginForm, roleTag(user.role));
+      list.append(row);
+      return;
+    }
     const role = document.createElement('span');
     role.className = 'tag';
     role.textContent = labels[user.role];
-    row.append(details, role);
+    row.append(details, identityForm, role);
     list.append(row);
   });
+}
+
+function roleTag(roleValue) {
+  const role = document.createElement('span');
+  role.className = 'tag';
+  role.textContent = labels[roleValue];
+  return role;
 }
 
 async function loadActivity() {
@@ -504,5 +1163,6 @@ function appendEmpty(container, message) {
 }
 
 document.querySelector('#transaction-form').elements.date.value = new Date().toISOString().slice(0, 10);
+addAccessPerson();
 if (localStorage.getItem(tokenKey)) enterApp();
 else checkSetup();
