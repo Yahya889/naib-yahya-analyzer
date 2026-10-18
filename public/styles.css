@@ -25,6 +25,16 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .identity-link-form { display: flex; align-items: center; gap: 6px; }
 .identity-link-form input { width: 135px; padding: 8px; font-size: 10px; }
 .identity-link-form .button { min-height: 34px; padding: 6px 9px; white-space: nowrap; font-size: 10px; }
+.request-review-note { margin: 0; font-size: 11px; }
+.feature-request-row { align-items: start; }
+.feature-request-details { flex: 1; min-width: 0; }
+.feature-request-details small { white-space: pre-wrap; line-height: 1.7; }
+.request-status-form { display: flex; gap: 6px; }
+.request-status-form select { min-width: 120px; padding: 7px; font-size: 10px; }
+.request-status-form .button { min-height: 34px; padding: 6px 10px; font-size: 10px; }
+.request-status.complete { color: #fff; background: var(--green); }
+.voice-dictation { justify-self: start; min-height: 38px; font-size: 11px; }
+.vehicle-entry-photo { width: 72px; height: 52px; margin-top: 6px; border-radius: 6px; background: #f1f5f1; object-fit: cover; }
 .brand-mark { width: 44px; height: 44px; display: inline-grid; place-items: center; border-radius: 14px; color: #fff; background: var(--green); font-size: 23px; font-weight: 700; }
 .auth-card .brand-mark { width: 54px; height: 54px; font-size: 27px; }
 .stack { display: grid; gap: 16px; }
@@ -220,6 +230,7 @@ footer { display: flex; justify-content: space-between; gap: 10px; padding: 24px
   .security-filters { align-items: stretch; flex-direction: column; }
   .identity-link-form { align-items: stretch; flex-direction: column; }
   .identity-link-form input { width: 100%; }
+  .request-status-form { align-items: stretch; flex-direction: column; }
   .report-card { grid-template-columns: 85px 1fr; gap: 9px; }
   .report-photo { width: 85px; height: 75px; }
   .vehicle-lookup-form { grid-template-columns: 1fr; }

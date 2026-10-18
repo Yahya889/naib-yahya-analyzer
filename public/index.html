@@ -34,6 +34,7 @@
         <nav aria-label="القائمة الرئيسية">
           <a href="#dashboard" data-page="dashboard" class="active"><span>⌂</span> الرئيسية</a>
           <a href="#security" data-page="security"><span>▣</span> أمن الموقع</a>
+          <a href="#requests" data-page="requests"><span>✉</span> طلبات الإضافة والتحسين</a>
           <a href="#documents" data-page="documents"><span>▤</span> تحليل المستندات</a>
           <a href="#accounting" data-page="accounting"><span>◈</span> المحاسبة</a>
           <a href="#media" data-page="media"><span>▧</span> الوسائط والملفات</a>
@@ -84,6 +85,7 @@
               <label>الغرض من الزيارة<input name="purpose" maxlength="200" required></label>
               <label>البوابة<input name="gate" maxlength="80" required></label>
               <label>لوحة المركبة (اختياري)<input name="vehiclePlate" maxlength="30"></label>
+              <label class="permit-photo-field">صورة المركبة واللوحة (اختياري)<input name="vehiclePhoto" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" capture="environment"></label>
             </div>
             <button class="button primary form-submit" type="submit">تسجيل الدخول</button>
           </form>
@@ -101,7 +103,8 @@
               <label>الموقع / البوابة<input name="location" maxlength="100"></label>
               <label class="permit-photo-field">صورة التقرير<input name="reportPhoto" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" capture="environment" required></label>
             </div>
-            <label class="report-details-field">التفاصيل<textarea name="details" rows="3" maxlength="2000" required></textarea></label>
+            <label class="report-details-field">التفاصيل<textarea name="details" rows="3" maxlength="2000" data-voice-target required></textarea></label>
+            <button class="button secondary voice-dictation" type="button" data-voice-for="report-form">🎙 إملاء صوتي (راجع النص قبل الحفظ)</button>
             <button class="button primary form-submit" type="submit">حفظ التقرير والصورة</button>
           </form>
           <div class="panel"><div class="panel-heading"><div><h2>التقارير الأمنية السابقة</h2><p>أحدث 100 تقرير محفوظ.</p></div></div><div id="report-list" class="report-list"></div></div>
@@ -113,7 +116,8 @@
               <label>الموقع / البوابة<input name="location" maxlength="100"></label>
               <label class="permit-photo-field">صورة (اختياري)<input name="procedurePhoto" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" capture="environment"></label>
             </div>
-            <label class="report-details-field">التفاصيل<textarea name="details" rows="3" maxlength="2000" required></textarea></label>
+            <label class="report-details-field">التفاصيل<textarea name="details" rows="3" maxlength="2000" data-voice-target required></textarea></label>
+            <button class="button secondary voice-dictation" type="button" data-voice-for="procedure-form">🎙 إملاء صوتي (راجع النص قبل الحفظ)</button>
             <button class="button primary form-submit" type="submit">حفظ الإجراء اليومي</button>
           </form>
           <div class="panel"><div class="panel-heading"><div><h2>سجل الإجراءات اليومية</h2><p>الإجراءات محفوظة باسم المستخدم الذي سجلها.</p></div></div><div id="procedure-list" class="report-list"></div></div>
@@ -146,6 +150,17 @@
             <div id="permit-alerts" class="permit-alerts" aria-live="polite"></div>
             <div class="table-wrap"><table><thead><tr><th>التصريح / الصورة</th><th>المركبة</th><th>السائق</th><th>الهوية والهاتف</th><th>الجهة والغرض</th><th>الصلاحية</th><th>الحالة</th></tr></thead><tbody id="permit-list"></tbody></table></div>
           </div>
+        </section>
+
+        <section class="page" id="page-requests" hidden>
+          <div class="section-intro"><div><p class="eyebrow">اقتراحات الفريق</p><h2>طلبات الإضافة والتحسين</h2><p>اكتب باختصار ما تحتاج إضافته أو تغييره. يراجع المسؤول الطلب قبل اعتماده.</p></div></div>
+          <form id="feature-request-form" class="panel stack">
+            <label>نوع الطلب<select name="category"><option>إضافة ميزة</option><option>تحسين أداء</option><option>متطلب أمني</option><option>مشكلة</option><option>أخرى</option></select></label>
+            <label>اكتب رسالتك<textarea name="message" rows="4" maxlength="2000" required placeholder="مثال: أحتاج إضافة تقرير يومي للجولات عند البوابة..."></textarea></label>
+            <button class="button primary" type="submit">إرسال للمسؤول</button>
+            <p class="muted request-review-note">الرسائل يطّلع عليها المسؤول فقط، ولا تُطبّق التغييرات تلقائياً.</p>
+          </form>
+          <div class="panel"><div class="panel-heading"><div><h2 id="request-list-title">طلباتي</h2><p>تابع مراجعة الطلبات وحالتها.</p></div></div><div id="feature-request-list" class="list"></div></div>
         </section>
 
         <section class="page" id="page-documents" hidden>
@@ -191,7 +206,7 @@
           <div class="section-intro"><div><p class="eyebrow">إدارة الوصول</p><h2>المستخدمون والصلاحيات</h2><p>الحساب الأول مسؤول النظام، ويمكنه إضافة مستخدمين بصلاحيات محدودة أو إدارية.</p></div></div>
           <form id="user-form" class="panel user-form">
             <div class="panel-heading"><div><h2>إضافة مستخدم</h2><p>استخدم كلمة مرور طويلة وفريدة.</p></div></div>
-            <div class="form-grid"><label>الاسم الظاهر<input name="username" minlength="3" maxlength="40" required></label><label>رقم الهوية (10 أرقام)<input name="identityNumber" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required></label><label>كلمة المرور<input name="password" type="password" minlength="12" maxlength="128" required></label><label>الصلاحية<select name="role"><option value="staff">مستخدم</option><option value="admin">مسؤول</option></select></label></div>
+            <div class="form-grid">            <label>الاسم الكامل<input name="username" minlength="3" maxlength="80" required></label><label>رقم الهوية (10 أرقام)<input name="identityNumber" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required></label><label>كلمة المرور<input name="password" type="password" minlength="12" maxlength="128" required></label><label>الصلاحية<select name="role"><option value="staff">مستخدم</option><option value="admin">مسؤول</option></select></label></div>
             <button class="button primary" type="submit">إضافة مستخدم</button>
           </form>
           <div id="user-list" class="panel list"></div>

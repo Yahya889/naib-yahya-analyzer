@@ -164,6 +164,15 @@ function createApp(options = {}) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by INTEGER NOT NULL REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS feature_requests (
+      id INTEGER PRIMARY KEY,
+      category TEXT NOT NULL CHECK (category IN ('إضافة ميزة', 'تحسين أداء', 'متطلب أمني', 'مشكلة', 'أخرى')),
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'جديد' CHECK (status IN ('جديد', 'قيد المراجعة', 'مقبول', 'مرفوض', 'مكتمل')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      user_id INTEGER NOT NULL REFERENCES users(id)
+    );
     CREATE INDEX IF NOT EXISTS security_access_status_idx ON security_access(exited_at, id DESC);
     CREATE INDEX IF NOT EXISTS vehicle_permits_expiry_idx ON vehicle_permits(valid_until);
   `);
@@ -393,6 +402,9 @@ function createApp(options = {}) {
         !['admin', 'staff'].includes(role)) {
       return res.status(400).json({ error: 'تحقق من الاسم ورقم الهوية وكلمة المرور والصلاحية.' });
     }
+    if (db.prepare('SELECT 1 FROM users WHERE owner_login_id = ?').get(identityNumber.trim())) {
+      return res.status(409).json({ error: 'رقم الهوية مستخدم كمعرف دخول خاص.' });
+    }
     const salt = crypto.randomBytes(16).toString('hex');
     const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
     try {
@@ -413,10 +425,15 @@ function createApp(options = {}) {
         !/^\d{10}$/.test(identityNumber.trim())) {
       return res.status(400).json({ error: 'رقم الهوية يجب أن يتكون من 10 أرقام.' });
     }
+    const user = db.prepare('SELECT role, owner_login_id FROM users WHERE id = ?').get(id);
+    if (!user) return res.status(404).json({ error: 'المستخدم غير موجود.' });
+    if (user.owner_login_id) return res.status(400).json({ error: 'حساب المالك يستخدم معرف دخول خاصاً، وليس رقم هوية.' });
+    if (db.prepare('SELECT 1 FROM users WHERE id != ? AND owner_login_id = ?').get(id, identityNumber.trim())) {
+      return res.status(409).json({ error: 'رقم الهوية مستخدم كمعرف دخول خاص.' });
+    }
     try {
       const result = db.prepare('UPDATE users SET identity_number = ? WHERE id = ?')
         .run(identityNumber.trim(), id);
-      if (!result.changes) return res.status(404).json({ error: 'المستخدم غير موجود.' });
       audit('تحديث رقم هوية مستخدم', { userId: id });
       res.json(db.prepare('SELECT id, username, identity_number, role, created_at FROM users WHERE id = ?').get(id));
     } catch (error) {
@@ -432,7 +449,8 @@ function createApp(options = {}) {
       return res.status(400).json({ error: 'معرف المالك يجب أن يتكون من 6 إلى 32 حرفاً إنجليزياً أو رقماً.' });
     }
     const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
-    if (!user || user.role !== 'admin') return res.status(404).json({ error: 'حساب المالك غير موجود.' });
+    if (!user || user.role !== 'admin') return res.status(404).json({ error: 'حساب المسؤول غير موجود.' });
+    if (id !== req.userId) return res.status(403).json({ error: 'يمكنك تغيير معرف دخول حسابك فقط.' });
     const conflict = db.prepare(`
       SELECT 1 FROM users
       WHERE id != ? AND (owner_login_id = ? OR identity_number = ?)
@@ -440,13 +458,57 @@ function createApp(options = {}) {
     `).get(id, ownerLoginId.trim(), ownerLoginId.trim());
     if (conflict) return res.status(409).json({ error: 'معرف الدخول مستخدم لحساب آخر.' });
     try {
-      db.prepare('UPDATE users SET owner_login_id = ? WHERE id = ?').run(ownerLoginId.trim(), id);
+      db.prepare('UPDATE users SET owner_login_id = ?, identity_number = NULL WHERE id = ?')
+        .run(ownerLoginId.trim(), id);
       audit('تحديث معرف دخول المالك', { userId: id });
       res.json({ id, owner_login_configured: true });
     } catch (error) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'معرف الدخول مستخدم لحساب آخر.' });
       throw error;
     }
+  });
+
+  app.get('/api/feature-requests', requireAuth, (req, res) => {
+    const requests = db.prepare(`
+      SELECT r.id, r.category, r.message, r.status, r.created_at, r.updated_at,
+        r.user_id, u.username AS requester_name
+      FROM feature_requests r JOIN users u ON u.id = r.user_id
+      WHERE (? = 1 OR r.user_id = ?)
+      ORDER BY r.id DESC LIMIT 200
+    `).all(req.role === 'admin' ? 1 : 0, req.userId);
+    res.json(requests);
+  });
+
+  app.post('/api/feature-requests', requireAuth, (req, res) => {
+    const { category, message } = req.body || {};
+    const categories = ['إضافة ميزة', 'تحسين أداء', 'متطلب أمني', 'مشكلة', 'أخرى'];
+    if (!categories.includes(category) || typeof message !== 'string' ||
+        !message.trim() || message.trim().length > 2000) {
+      return res.status(400).json({ error: 'اختر نوع الطلب واكتب رسالة من 1 إلى 2000 حرف.' });
+    }
+    const result = db.prepare(`
+      INSERT INTO feature_requests (category, message, user_id) VALUES (?, ?, ?)
+    `).run(category, message.trim(), req.userId);
+    audit('إرسال طلب تحسين', { requestId: result.lastInsertRowid, userId: req.userId });
+    res.status(201).json(db.prepare(`
+      SELECT id, category, message, status, created_at, updated_at, user_id
+      FROM feature_requests WHERE id = ?
+    `).get(result.lastInsertRowid));
+  });
+
+  app.patch('/api/feature-requests/:id', requireAuth, requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    const { status } = req.body || {};
+    if (!Number.isSafeInteger(id) || id < 1 ||
+        !['جديد', 'قيد المراجعة', 'مقبول', 'مرفوض', 'مكتمل'].includes(status)) {
+      return res.status(400).json({ error: 'تحقق من رقم الطلب وحالته.' });
+    }
+    const result = db.prepare(`
+      UPDATE feature_requests SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(status, id);
+    if (!result.changes) return res.status(404).json({ error: 'الطلب غير موجود.' });
+    audit('تحديث حالة طلب تحسين', { requestId: id, status });
+    res.json({ id, status });
   });
 
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
@@ -674,7 +736,8 @@ function createApp(options = {}) {
     `).all(plate, plate);
     const access = db.prepare(`
       SELECT a.id, a.person_name, a.identity_number, a.phone, a.organization, a.purpose, a.gate,
-        a.person_count, a.vehicle_plate, a.entered_at, a.exited_at, v.vehicle_code
+        a.person_count, a.vehicle_plate, a.entered_at, a.exited_at, v.vehicle_code,
+        a.vehicle_photo_media_id
       FROM security_access a LEFT JOIN vehicles v ON v.id = a.vehicle_id
       WHERE UPPER(a.vehicle_plate) = ? OR UPPER(v.vehicle_code) = ?
       ORDER BY a.id DESC LIMIT 100
@@ -1064,8 +1127,9 @@ function createApp(options = {}) {
       SELECT 1 FROM vehicle_permits WHERE media_id = ?
       UNION ALL SELECT 1 FROM security_reports WHERE media_id = ?
       UNION ALL SELECT 1 FROM daily_procedures WHERE media_id = ?
-    `).get(file.id, file.id, file.id)) {
-      return res.status(409).json({ error: 'لا يمكن حذف صورة مرتبطة بتصريح أو تقرير أمني.' });
+      UNION ALL SELECT 1 FROM security_access WHERE vehicle_photo_media_id = ?
+    `).get(file.id, file.id, file.id, file.id)) {
+      return res.status(409).json({ error: 'لا يمكن حذف صورة مرتبطة بتصريح أو تقرير أو سجل دخول أمني.' });
     }
     db.prepare('DELETE FROM media WHERE id = ?').run(file.id);
     fs.rmSync(path.join(storagePath, file.filename), { force: true });
@@ -1081,7 +1145,7 @@ function createApp(options = {}) {
   app.use(express.static(path.resolve(__dirname, '../public')));
   app.use((error, _req, res, _next) => {
     if (error instanceof multer.MulterError) {
-      const maxSize = ['permitPhoto', 'reportPhoto', 'procedurePhoto'].includes(error.field) ? '10 ميجابايت' : '100 ميجابايت';
+      const maxSize = ['permitPhoto', 'reportPhoto', 'procedurePhoto', 'vehiclePhoto'].includes(error.field) ? '10 ميجابايت' : '100 ميجابايت';
       const message = error.code === 'LIMIT_FILE_SIZE' ? `حجم الملف يتجاوز الحد الأقصى (${maxSize}).` : 'تعذر رفع الملف.';
       return res.status(400).json({ error: message });
     }
@@ -1089,7 +1153,8 @@ function createApp(options = {}) {
       'نوع الملف غير مدعوم أو لا يطابق امتداده.',
       'صورة التصريح يجب أن تكون JPG أو PNG.',
       'صورة التقرير يجب أن تكون JPG أو PNG.',
-      'صورة الإجراء يجب أن تكون JPG أو PNG.'
+      'صورة الإجراء يجب أن تكون JPG أو PNG.',
+      'صورة المركبة يجب أن تكون JPG أو PNG.'
     ].includes(error.message)) {
       return res.status(400).json({ error: error.message });
     }

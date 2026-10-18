@@ -9,6 +9,7 @@ const permitStatusLabels = {
 const pages = {
   dashboard: 'الرئيسية',
   security: 'أمن الموقع',
+  requests: 'طلبات الإضافة والتحسين',
   documents: 'تحليل المستندات',
   accounting: 'المحاسبة المالية',
   media: 'الوسائط والملفات',
@@ -140,6 +141,10 @@ function logout(showMessage = true) {
   document.querySelector('#account-name-field input').required = false;
   document.querySelector('#setup-key-field').hidden = true;
   document.querySelector('#setup-key-field input').required = false;
+  const loginIdInput = authForm.querySelector('input[name="loginId"]');
+  loginIdInput.inputMode = 'numeric';
+  loginIdInput.pattern = '[0-9]{10}|[A-Za-z0-9_.-]{6,32}';
+  loginIdInput.maxLength = 32;
   document.querySelector('#login-id-label').firstChild.textContent = 'رقم الهوية أو معرف الدخول';
   document.querySelector('#access-notice').hidden = false;
   setupButton.textContent = 'إعداد الحساب الأول';
@@ -160,6 +165,7 @@ async function navigate() {
   try {
     if (page === 'dashboard') await loadDashboard();
     if (page === 'security') await loadSecurity();
+    if (page === 'requests') await loadFeatureRequests();
     if (page === 'documents') await loadDocuments();
     if (page === 'accounting') await loadAccounting();
     if (page === 'media') await loadMedia();
@@ -172,17 +178,139 @@ async function navigate() {
 
 window.addEventListener('hashchange', navigate);
 
+document.querySelector('#feature-request-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/feature-requests', {
+      method: 'POST',
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    form.reset();
+    await loadFeatureRequests();
+    showToast('تم إرسال طلبك للمسؤول.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
+document.querySelectorAll('[data-voice-for]').forEach((button) => {
+  button.addEventListener('click', () => dictateInto(button));
+});
+
+function dictateInto(button) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    showToast('الإملاء غير مدعوم هنا. استخدم زر الميكروفون في لوحة مفاتيح الآيفون، ثم راجع النص.');
+    return;
+  }
+  const form = document.getElementById(button.dataset.voiceFor);
+  const target = form?.querySelector('[data-voice-target]');
+  if (!target) return;
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'ar-SA';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  button.disabled = true;
+  button.textContent = 'جارٍ الاستماع…';
+  recognition.onresult = (event) => {
+    const transcript = [...event.results]
+      .filter((result) => result.isFinal)
+      .map((result) => result[0].transcript)
+      .join(' ')
+      .trim();
+    if (transcript) {
+      target.value = `${target.value.trim()}${target.value.trim() ? '\n' : ''}${transcript}`;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
+  recognition.onerror = () => showToast('تعذر التقاط الصوت. تحقق من إذن الميكروفون ثم أعد المحاولة.');
+  recognition.onend = () => {
+    button.disabled = false;
+    button.textContent = '🎙 إملاء صوتي (راجع النص قبل الحفظ)';
+    target.focus();
+  };
+  try { recognition.start(); }
+  catch {
+    button.disabled = false;
+    button.textContent = '🎙 إملاء صوتي (راجع النص قبل الحفظ)';
+    showToast('تعذر بدء الإملاء. استخدم زر الميكروفون بلوحة مفاتيح الهاتف.');
+  }
+}
+
+async function loadFeatureRequests() {
+  const requests = await api('/api/feature-requests');
+  const list = document.querySelector('#feature-request-list');
+  list.replaceChildren();
+  document.querySelector('#request-list-title').textContent =
+    currentUser.role === 'admin' ? 'طلبات الفريق الواردة' : 'طلباتي';
+  if (!requests.length) return appendEmpty(list, 'لا توجد طلبات مسجلة بعد.');
+  requests.forEach((request) => {
+    const row = document.createElement('div');
+    row.className = 'list-row feature-request-row';
+    const details = document.createElement('div');
+    details.className = 'feature-request-details';
+    details.append(
+      textElement('strong', `${request.category} · ${request.requester_name}`),
+      textElement('small', `${formatTimestamp(request.created_at)} · ${request.message}`)
+    );
+    const status = document.createElement('span');
+    status.className = `tag request-status ${request.status === 'مكتمل' ? 'complete' : ''}`;
+    status.textContent = request.status;
+    row.append(details);
+    if (currentUser.role === 'admin') {
+      const statusForm = document.createElement('form');
+      statusForm.className = 'request-status-form';
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', 'تحديث حالة الطلب');
+      for (const value of ['جديد', 'قيد المراجعة', 'مقبول', 'مرفوض', 'مكتمل']) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === request.status;
+        select.append(option);
+      }
+      const update = document.createElement('button');
+      update.type = 'submit';
+      update.className = 'button secondary';
+      update.textContent = 'تحديث';
+      statusForm.append(select, update);
+      statusForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        update.disabled = true;
+        try {
+          await api(`/api/feature-requests/${request.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: select.value })
+          });
+          await loadFeatureRequests();
+          showToast('تم تحديث حالة الطلب.');
+        } catch (error) { showToast(error.message); }
+        finally { update.disabled = false; }
+      });
+      row.append(statusForm);
+    } else {
+      row.append(status);
+    }
+    list.append(row);
+  });
+}
+
 document.querySelector('#access-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  const fields = Object.fromEntries(new FormData(form));
-  fields.people = [...form.querySelectorAll('.access-person')].map((person) => ({
+  const data = new FormData(form);
+  data.delete('personName');
+  data.delete('identityNumber');
+  data.delete('phone');
+  data.set('people', JSON.stringify([...form.querySelectorAll('.access-person')].map((person) => ({
     name: person.querySelector('[name="personName"]').value,
     identityNumber: person.querySelector('[name="identityNumber"]').value,
     phone: person.querySelector('[name="phone"]').value
-  }));
+  }))));
   try {
-    await api('/api/security/access', { method: 'POST', body: JSON.stringify(fields) });
+    await api('/api/security/access', { method: 'POST', body: data });
     form.reset();
     document.querySelector('#access-people-list').replaceChildren();
     addAccessPerson();
@@ -285,6 +413,13 @@ function renderVehicleLookup(vehicle) {
         textElement('span', `الأشخاص: ${visit.members.map((member) => `${member.name} (${member.identity_number})`).join('، ')}`),
         textElement('span', `الغرض: ${visit.purpose} · الدخول: ${formatTimestamp(visit.entered_at)} · الخروج: ${visit.exited_at ? formatTimestamp(visit.exited_at) : 'داخل الموقع'}`)
       );
+      if (visit.vehicle_photo_media_id) {
+        const photo = document.createElement('img');
+        photo.className = 'vehicle-entry-photo';
+        photo.alt = `صورة المركبة ${visit.vehicle_plate}`;
+        loadImagePreview(photo, visit.vehicle_photo_media_id);
+        card.append(photo);
+      }
       result.append(card);
     });
   }
@@ -330,6 +465,13 @@ async function loadAccessRecords() {
       textElement('span', record.gate),
       textElement('small', record.vehicle_plate ? `${record.vehicle_plate} · ${record.vehicle_code || ''}` : '—')
     );
+    if (record.vehicle_photo_media_id) {
+      const photo = document.createElement('img');
+      photo.className = 'vehicle-entry-photo';
+      photo.alt = `صورة المركبة ${record.vehicle_plate}`;
+      loadImagePreview(photo, record.vehicle_photo_media_id);
+      gate.append(photo);
+    }
     const entered = document.createElement('td');
     entered.textContent = formatTimestamp(record.entered_at);
     const exited = document.createElement('td');
@@ -349,6 +491,12 @@ async function loadAccessRecords() {
         } catch (error) { showToast(error.message); }
       });
       action.append(leave);
+    }
+
+    function loadImagePreview(image, mediaId) {
+      api(`/api/media/${mediaId}/preview`)
+        .then((blob) => { image.src = URL.createObjectURL(blob); })
+        .catch(() => { image.alt = 'تعذرت معاينة الصورة'; });
     }
     row.append(person, reason, count, gate, entered, exited, action);
     body.append(row);
@@ -873,7 +1021,10 @@ async function loadUsers() {
     const date = document.createElement('small');
     date.textContent = new Date(user.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('ar-SA');
     const identity = document.createElement('small');
-    identity.textContent = user.identity_number || 'لم يُربط رقم هوية بعد';
+    const isOwnerAccount = user.id === currentUser.id && user.role === 'admin';
+    identity.textContent = isOwnerAccount
+      ? 'دخول خاص بمعرف المالك'
+      : user.identity_number || 'لم يُربط رقم هوية بعد';
     details.append(name, identity, date);
     const identityForm = document.createElement('form');
     identityForm.className = 'identity-link-form';
@@ -903,12 +1054,51 @@ async function loadUsers() {
       } catch (error) { showToast(error.message); }
       finally { updateIdentity.disabled = false; }
     });
+    if (isOwnerAccount) {
+      const ownerLoginForm = document.createElement('form');
+      ownerLoginForm.className = 'identity-link-form';
+      const ownerLoginInput = document.createElement('input');
+      ownerLoginInput.name = 'ownerLoginId';
+      ownerLoginInput.pattern = '[A-Za-z0-9_.-]{6,32}';
+      ownerLoginInput.maxLength = 32;
+      ownerLoginInput.autocomplete = 'off';
+      ownerLoginInput.placeholder = user.has_owner_login_id ? 'معرف المالك مضبوط (أدخل للتغيير)' : 'معرف المالك الخاص';
+      ownerLoginInput.required = true;
+      const saveOwnerLogin = document.createElement('button');
+      saveOwnerLogin.type = 'submit';
+      saveOwnerLogin.className = 'button secondary';
+      saveOwnerLogin.textContent = 'حفظ معرف المالك';
+      ownerLoginForm.append(ownerLoginInput, saveOwnerLogin);
+      ownerLoginForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        saveOwnerLogin.disabled = true;
+        try {
+          await api(`/api/users/${user.id}/owner-login`, {
+            method: 'PATCH',
+            body: JSON.stringify({ ownerLoginId: ownerLoginInput.value })
+          });
+          await loadUsers();
+          showToast('تم تحديث معرف المالك الخاص.');
+        } catch (error) { showToast(error.message); }
+        finally { saveOwnerLogin.disabled = false; }
+      });
+      row.append(details, ownerLoginForm, roleTag(user.role));
+      list.append(row);
+      return;
+    }
     const role = document.createElement('span');
     role.className = 'tag';
     role.textContent = labels[user.role];
     row.append(details, identityForm, role);
     list.append(row);
   });
+}
+
+function roleTag(roleValue) {
+  const role = document.createElement('span');
+  role.className = 'tag';
+  role.textContent = labels[roleValue];
+  return role;
 }
 
 async function loadActivity() {

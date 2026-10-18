@@ -40,29 +40,32 @@ test('authenticates users and provides protected document, accounting, and media
   assert.equal((await request('/api/security/procedures')).status, 401);
 
   const registration = await request('/api/auth/register', json('POST', {
-    username: 'owner',
-    identityNumber: '1000000001',
+    username: 'Site Owner',
+    ownerLoginId: 'private-owner-22',
     setupKey: 'wrong-key',
     password: 'very-long-test-password'
   }));
   assert.equal(registration.status, 403);
   const validRegistration = await request('/api/auth/register', json('POST', {
-    username: 'owner',
-    identityNumber: '1000000001',
+    username: 'Site Owner',
+    ownerLoginId: 'private-owner-22',
     setupKey: 'test-only-initial-admin-key-long-enough',
     password: 'very-long-test-password'
   }));
   assert.equal(validRegistration.status, 201);
   const admin = await validRegistration.json();
   assert.equal((await request('/api/auth/register', json('POST', {
-    username: 'another',
-    identityNumber: '1000000002',
+    username: 'Another User',
+    ownerLoginId: 'another-owner-23',
     password: 'very-long-test-password'
   }))).status, 403);
   assert.equal((await (await request('/api/auth/me', { headers: authHeaders(admin.token) })).json()).role, 'admin');
+  const ownerProfile = await (await request('/api/auth/me', { headers: authHeaders(admin.token) })).json();
+  assert.equal(Object.hasOwn(ownerProfile, 'owner_login_id'), false);
+  assert.equal(Object.hasOwn(ownerProfile, 'identity_number'), false);
 
   const createdUser = await request('/api/users', json('POST', {
-    username: 'staff',
+    username: 'Security Staff',
     identityNumber: '1000000003',
     password: 'another-long-test-password'
   }, admin.token));
@@ -70,18 +73,35 @@ test('authenticates users and provides protected document, accounting, and media
   const user = await createdUser.json();
   assert.equal(user.role, 'staff');
   assert.equal(user.identity_number, '1000000003');
+  assert.equal(Object.hasOwn(user, 'owner_login_id'), false);
+  const listedUsers = await (await request('/api/users', { headers: authHeaders(admin.token) })).json();
+  assert.equal(Object.hasOwn(listedUsers[0], 'owner_login_id'), false);
+  const ownerLoginChange = await request(`/api/users/${listedUsers.find((entry) => entry.role === 'admin').id}/owner-login`, json('PATCH', {
+    ownerLoginId: 'owner-access-77'
+  }, admin.token));
+  assert.equal(ownerLoginChange.status, 200);
+  const ownerLogin = await request('/api/auth/login', json('POST', {
+    loginId: 'owner-access-77',
+    password: 'very-long-test-password'
+  }));
+  assert.equal(ownerLogin.status, 200);
+  const legacyOwnerLogin = await request('/api/auth/login', json('POST', {
+    loginId: 'private-owner-22',
+    password: 'very-long-test-password'
+  }));
+  assert.equal(legacyOwnerLogin.status, 401);
   const updatedIdentity = await request(`/api/users/${user.id}/identity`, json('PATCH', {
     identityNumber: '1000000004'
   }, admin.token));
   assert.equal(updatedIdentity.status, 200);
   assert.equal((await updatedIdentity.json()).identity_number, '1000000004');
   const oldIdentityLogin = await request('/api/auth/login', json('POST', {
-    identityNumber: '1000000003',
+    loginId: '1000000003',
     password: 'another-long-test-password'
   }));
   assert.equal(oldIdentityLogin.status, 401);
   const login = await request('/api/auth/login', json('POST', {
-    identityNumber: '1000000004',
+    loginId: '1000000004',
     password: 'another-long-test-password'
   }));
   const staff = await login.json();
@@ -89,11 +109,34 @@ test('authenticates users and provides protected document, accounting, and media
   assert.equal((await request(`/api/users/${user.id}/identity`, json('PATCH', {
     identityNumber: '1000000005'
   }, staff.token))).status, 403);
+  assert.equal((await request(`/api/users/${listedUsers.find((entry) => entry.role === 'admin').id}/owner-login`, json('PATCH', {
+    ownerLoginId: 'staff-owner-99'
+  }, staff.token))).status, 403);
   assert.equal((await request('/api/users', json('POST', {
-    username: 'duplicate',
+    username: 'Duplicate User',
     identityNumber: '1000000004',
     password: 'another-long-test-password'
   }, admin.token))).status, 409);
+
+  const featureRequest = await request('/api/feature-requests', json('POST', {
+    category: 'تحسين أداء',
+    message: 'أحتاج تسريع البحث في سجل المركبات.'
+  }, staff.token));
+  assert.equal(featureRequest.status, 201);
+  const featureRequestEntry = await featureRequest.json();
+  assert.equal((await (await request('/api/feature-requests', {
+    headers: authHeaders(staff.token)
+  })).json()).length, 1);
+  const adminRequests = await (await request('/api/feature-requests', {
+    headers: authHeaders(admin.token)
+  })).json();
+  assert.equal(adminRequests[0].requester_name, 'Security Staff');
+  assert.equal((await request(`/api/feature-requests/${featureRequestEntry.id}`, json('PATCH', {
+    status: 'قيد المراجعة'
+  }, staff.token))).status, 403);
+  assert.equal((await request(`/api/feature-requests/${featureRequestEntry.id}`, json('PATCH', {
+    status: 'قيد المراجعة'
+  }, admin.token))).status, 200);
 
   const analyzed = await request('/api/documents/analyze', json('POST', {
     title: 'عقد تجريبي',
@@ -151,20 +194,33 @@ test('authenticates users and provides protected document, accounting, and media
     body: rejectedUpload
   })).status, 400);
 
-  const access = await request('/api/security/access', json('POST', {
-    people: [
-      { name: 'زائر أول', identityNumber: 'ID-101', phone: '0500000001' },
-      { name: 'زائر ثان', identityNumber: 'ID-102', phone: '0500000002' }
-    ],
-    organization: 'شركة تجريبية',
-    purpose: 'زيارة عمل',
-    gate: 'البوابة الرئيسية',
-    vehiclePlate: 'XYZ 987'
-  }, staff.token));
+  const accessForm = new FormData();
+  accessForm.append('people', JSON.stringify([
+    { name: 'زائر أول', identityNumber: 'ID-101', phone: '0500000001' },
+    { name: 'زائر ثان', identityNumber: 'ID-102', phone: '0500000002' }
+  ]));
+  accessForm.append('organization', 'شركة تجريبية');
+  accessForm.append('purpose', 'زيارة عمل');
+  accessForm.append('gate', 'البوابة الرئيسية');
+  accessForm.append('vehiclePlate', 'XYZ 987');
+  accessForm.append('vehiclePhoto', new Blob(['test vehicle image'], { type: 'image/png' }), 'vehicle.png');
+  const access = await request('/api/security/access', {
+    method: 'POST',
+    headers: authHeaders(staff.token),
+    body: accessForm
+  });
   assert.equal(access.status, 201);
   const accessRecord = await access.json();
   assert.equal(accessRecord.person_count, 2);
+  assert.ok(accessRecord.vehicle_photo_media_id);
   assert.match(accessRecord.vehicle_code, /^VH-[0-9A-F]{12}$/);
+  assert.equal((await request(`/api/media/${accessRecord.vehicle_photo_media_id}/preview`, {
+    headers: authHeaders(staff.token)
+  })).status, 200);
+  assert.equal((await request(`/api/media/${accessRecord.vehicle_photo_media_id}`, {
+    method: 'DELETE',
+    headers: authHeaders(staff.token)
+  })).status, 409);
   const accessList = await (await request('/api/security/access?status=inside&search=ID-102', {
     headers: authHeaders(staff.token)
   })).json();
@@ -268,7 +324,7 @@ test('authenticates users and provides protected document, accounting, and media
   });
   assert.equal(procedureResponse.status, 201);
   const procedure = await procedureResponse.json();
-  assert.equal(procedure.created_by_name, 'staff');
+  assert.equal(procedure.created_by_name, 'Security Staff');
   const procedures = await (await request('/api/security/procedures', {
     headers: authHeaders(staff.token)
   })).json();
@@ -302,8 +358,8 @@ test('trusted proxy client IPs have independent login limits', async (t) => {
 
   const base = `http://127.0.0.1:${server.address().port}`;
   const credentials = {
-    username: 'owner',
-    identityNumber: '2000000001',
+    username: 'Site Owner',
+    ownerLoginId: 'private-owner-22',
     setupKey: 'test-only-initial-admin-key-long-enough',
     password: 'very-long-test-password'
   };
@@ -325,7 +381,7 @@ test('trusted proxy client IPs have independent login limits', async (t) => {
   const otherClient = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.11' },
-    body: JSON.stringify({ identityNumber: credentials.identityNumber, password: credentials.password })
+    body: JSON.stringify({ loginId: credentials.ownerLoginId, password: credentials.password })
   });
   assert.equal(otherClient.status, 200);
 });
