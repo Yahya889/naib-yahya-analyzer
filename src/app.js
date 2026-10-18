@@ -220,6 +220,14 @@ function createApp(options = {}) {
     return vehicle;
   }
 
+  function saveSecurityImage(file) {
+    const extension = file.mimetype === 'image/png' ? '.png' : '.jpg';
+    const filename = `${crypto.randomUUID()}${extension}`;
+    const filePath = path.join(storagePath, filename);
+    fs.writeFileSync(filePath, file.buffer, { flag: 'wx' });
+    return { filename, path: filePath };
+  }
+
   function makeToken(userId) {
     const payload = Buffer.from(JSON.stringify({ sub: userId, exp: Date.now() + 12 * 60 * 60 * 1000 })).toString('base64url');
     const signature = crypto.createHmac('sha256', tokenSecret).update(payload).digest('base64url');
@@ -460,10 +468,7 @@ function createApp(options = {}) {
   });
 
   const permitPhotoUpload = multer({
-    storage: multer.diskStorage({
-      destination: (_req, _file, callback) => callback(null, storagePath),
-      filename: (_req, file, callback) => callback(null, `${crypto.randomUUID()}${path.extname(file.originalname).toLowerCase()}`)
-    }),
+    storage: multer.memoryStorage(),
     limits: { fileSize: MAX_PERMIT_PHOTO_SIZE, files: 1 },
     fileFilter: (_req, file, callback) => {
       const extension = path.extname(file.originalname).toLowerCase();
@@ -546,7 +551,6 @@ function createApp(options = {}) {
   });
 
   app.post('/api/security/permits', requireAuth, permitPhotoUpload.single('permitPhoto'), (req, res) => {
-    const photoPath = req.file ? path.join(storagePath, req.file.filename) : null;
     const {
       permitNumber, vehiclePlate, driverName, identityNumber, phone,
       organization = '', purpose, validFrom, validUntil
@@ -564,18 +568,19 @@ function createApp(options = {}) {
       !requiredText(purpose, 200) || !validDate(validFrom) || !validDate(validUntil) ||
       validUntil < validFrom;
     if (invalid) {
-      if (photoPath) fs.rmSync(photoPath, { force: true });
       return res.status(400).json({ error: 'أكمل بيانات التصريح وتأكد من صحة فترة الصلاحية وإرفاق صورة JPG أو PNG.' });
     }
 
+    let savedPhoto;
     try {
+      savedPhoto = saveSecurityImage(req.file);
       const createPermit = db.transaction(() => {
         const vehicle = getOrCreateVehicle(vehiclePlate);
         const mediaResult = db.prepare(`
           INSERT INTO media (filename, original_name, mime_type, size, category)
           VALUES (?, ?, ?, ?, ?)
         `).run(
-          req.file.filename,
+          savedPhoto.filename,
           path.basename(req.file.originalname.replaceAll('\\', '/')).slice(0, 255),
           req.file.mimetype,
           req.file.size,
@@ -600,7 +605,7 @@ function createApp(options = {}) {
       });
       res.status(201).json(createPermit());
     } catch (error) {
-      if (photoPath) fs.rmSync(photoPath, { force: true });
+      if (savedPhoto) fs.rmSync(savedPhoto.path, { force: true });
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         return res.status(409).json({ error: 'رقم التصريح مسجل مسبقاً.' });
       }
@@ -609,10 +614,7 @@ function createApp(options = {}) {
   });
 
   const reportPhotoUpload = multer({
-    storage: multer.diskStorage({
-      destination: (_req, _file, callback) => callback(null, storagePath),
-      filename: (_req, file, callback) => callback(null, `${crypto.randomUUID()}${path.extname(file.originalname).toLowerCase()}`)
-    }),
+    storage: multer.memoryStorage(),
     limits: { fileSize: MAX_PERMIT_PHOTO_SIZE, files: 1 },
     fileFilter: (_req, file, callback) => {
       const extension = path.extname(file.originalname).toLowerCase();
@@ -634,23 +636,23 @@ function createApp(options = {}) {
   });
 
   app.post('/api/security/reports', requireAuth, reportPhotoUpload.single('reportPhoto'), (req, res) => {
-    const photoPath = req.file ? path.join(storagePath, req.file.filename) : null;
     const { title, category, location = '', details } = req.body || {};
     const validCategories = ['بلاغ ميداني', 'حادث', 'مخالفة', 'ملاحظة'];
     const requiredText = (value, max) =>
       typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
     if (!req.file || !requiredText(title, 150) || !validCategories.includes(category) ||
         typeof location !== 'string' || location.trim().length > 100 || !requiredText(details, 2000)) {
-      if (photoPath) fs.rmSync(photoPath, { force: true });
       return res.status(400).json({ error: 'أكمل عنوان التقرير ونوعه وتفاصيله وأرفق صورة JPG أو PNG.' });
     }
+    let savedPhoto;
     try {
+      savedPhoto = saveSecurityImage(req.file);
       const createReport = db.transaction(() => {
         const mediaResult = db.prepare(`
           INSERT INTO media (filename, original_name, mime_type, size, category)
           VALUES (?, ?, ?, ?, ?)
         `).run(
-          req.file.filename,
+          savedPhoto.filename,
           path.basename(req.file.originalname.replaceAll('\\', '/')).slice(0, 255),
           req.file.mimetype,
           req.file.size,
@@ -668,7 +670,7 @@ function createApp(options = {}) {
       });
       res.status(201).json(createReport());
     } catch (error) {
-      if (photoPath) fs.rmSync(photoPath, { force: true });
+      if (savedPhoto) fs.rmSync(savedPhoto.path, { force: true });
       throw error;
     }
   });
