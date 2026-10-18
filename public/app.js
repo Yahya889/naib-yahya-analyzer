@@ -1,7 +1,9 @@
 const tokenKey = 'naib-session';
 const labels = { income: 'إيراد', expense: 'مصروف', purchase: 'مشتريات', admin: 'مسؤول', staff: 'مستخدم' };
+const permitStatusLabels = { active: 'ساري', expiring: 'ينتهي خلال 30 يوماً', expired: 'منتهي' };
 const pages = {
   dashboard: 'الرئيسية',
+  security: 'أمن الموقع',
   documents: 'تحليل المستندات',
   accounting: 'المحاسبة المالية',
   media: 'الوسائط والملفات',
@@ -128,6 +130,7 @@ async function navigate() {
   document.querySelector('#page-title').textContent = pages[page];
   try {
     if (page === 'dashboard') await loadDashboard();
+    if (page === 'security') await loadSecurity();
     if (page === 'documents') await loadDocuments();
     if (page === 'accounting') await loadAccounting();
     if (page === 'media') await loadMedia();
@@ -139,6 +142,238 @@ async function navigate() {
 }
 
 window.addEventListener('hashchange', navigate);
+
+document.querySelector('#access-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const fields = Object.fromEntries(new FormData(form));
+  fields.people = [...form.querySelectorAll('.access-person')].map((person) => ({
+    name: person.querySelector('[name="personName"]').value,
+    identityNumber: person.querySelector('[name="identityNumber"]').value,
+    phone: person.querySelector('[name="phone"]').value
+  }));
+  try {
+    await api('/api/security/access', { method: 'POST', body: JSON.stringify(fields) });
+    form.reset();
+    document.querySelector('#access-people-list').replaceChildren();
+    addAccessPerson();
+    await loadSecurity();
+    showToast('تم تسجيل دخول المجموعة.');
+  } catch (error) { showToast(error.message); }
+});
+
+document.querySelector('#add-access-person').addEventListener('click', () => addAccessPerson());
+document.querySelector('#access-status').addEventListener('change', loadAccessRecords);
+document.querySelector('#access-search').addEventListener('input', loadAccessRecords);
+
+document.querySelector('#permit-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/security/permits', { method: 'POST', body: new FormData(form) });
+    form.reset();
+    await loadSecurity();
+    showToast('تم حفظ تصريح المركبة وصورته.');
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
+document.querySelector('#permit-search').addEventListener('input', loadPermits);
+
+async function loadSecurity() {
+  const [summary] = await Promise.all([
+    api('/api/security/summary'),
+    loadAccessRecords(),
+    loadPermits()
+  ]);
+  document.querySelector('#security-inside-count').textContent = formatMoney(summary.people_inside);
+  document.querySelector('#security-active-visits').textContent = formatMoney(summary.active_visits);
+  document.querySelector('#security-expiring-count').textContent = formatMoney(summary.expired_permits + summary.expiring_permits);
+}
+
+async function loadAccessRecords() {
+  const status = document.querySelector('#access-status').value;
+  const search = document.querySelector('#access-search').value;
+  const records = await api(`/api/security/access?status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`);
+  const body = document.querySelector('#access-list');
+  body.replaceChildren();
+  if (!records.length) return appendTableEmpty(body, 7, 'لا توجد سجلات دخول مطابقة.');
+  records.forEach((record) => {
+    const row = document.createElement('tr');
+    const person = document.createElement('td');
+    const memberList = document.createElement('div');
+    memberList.className = 'access-member-list';
+    record.members.forEach((member) => {
+      const details = document.createElement('div');
+      details.append(textElement('strong', member.name), textElement('small', `${member.identity_number} · ${member.phone}`));
+      memberList.append(details);
+    });
+    person.append(memberList);
+    const reason = document.createElement('td');
+    reason.append(textElement('span', record.organization || '—'), textElement('small', record.purpose));
+    const count = document.createElement('td');
+    count.textContent = formatMoney(record.person_count);
+    const gate = document.createElement('td');
+    gate.append(textElement('span', record.gate), textElement('small', record.vehicle_plate || '—'));
+    const entered = document.createElement('td');
+    entered.textContent = formatTimestamp(record.entered_at);
+    const exited = document.createElement('td');
+    exited.textContent = record.exited_at ? formatTimestamp(record.exited_at) : 'داخل الموقع';
+    const action = document.createElement('td');
+    if (!record.exited_at) {
+      const leave = document.createElement('button');
+      leave.type = 'button';
+      leave.className = 'button secondary table-button';
+      leave.textContent = 'تسجيل الخروج';
+      leave.addEventListener('click', async () => {
+        leave.disabled = true;
+        try {
+          await api(`/api/security/access/${record.id}/exit`, { method: 'POST' });
+          await loadSecurity();
+          showToast('تم تسجيل خروج المجموعة.');
+        } catch (error) { showToast(error.message); }
+      });
+      action.append(leave);
+    }
+    row.append(person, reason, count, gate, entered, exited, action);
+    body.append(row);
+  });
+}
+
+function addAccessPerson() {
+  const container = document.querySelector('#access-people-list');
+  if (container.childElementCount >= 200) {
+    showToast('لا يمكن إضافة أكثر من 200 شخص في السجل الواحد.');
+    return;
+  }
+  const person = document.createElement('fieldset');
+  person.className = 'access-person';
+  person.append(textElement('legend', `بيانات الشخص ${container.childElementCount + 1}`));
+  const fields = document.createElement('div');
+  fields.className = 'form-grid security-form-grid';
+  for (const [name, labelText, maxLength, type] of [
+    ['personName', 'الاسم الكامل', 120, 'text'],
+    ['identityNumber', 'رقم الهوية / الموظف', 40, 'text'],
+    ['phone', 'رقم الهاتف', 30, 'tel']
+  ]) {
+    const label = textElement('label', labelText);
+    const input = document.createElement('input');
+    input.name = name;
+    input.type = type;
+    input.maxLength = maxLength;
+    input.required = true;
+    label.append(input);
+    fields.append(label);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'access-person-actions';
+  if (container.childElementCount > 0) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'icon-button';
+    remove.textContent = 'إزالة الشخص';
+    remove.addEventListener('click', () => {
+      person.remove();
+      [...container.children].forEach((entry, index) => {
+        entry.querySelector('legend').textContent = `بيانات الشخص ${index + 1}`;
+      });
+      container.firstElementChild.querySelector('.access-person-actions').replaceChildren();
+    });
+    actions.append(remove);
+  }
+  person.append(fields, actions);
+  container.append(person);
+  if (container.childElementCount === 2) {
+    const firstActions = container.firstElementChild.querySelector('.access-person-actions');
+    const removeFirst = document.createElement('button');
+    removeFirst.type = 'button';
+    removeFirst.className = 'icon-button';
+    removeFirst.textContent = 'إزالة الشخص';
+    removeFirst.addEventListener('click', () => {
+      container.firstElementChild.remove();
+      [...container.children].forEach((entry, index) => {
+        entry.querySelector('legend').textContent = `بيانات الشخص ${index + 1}`;
+      });
+      container.firstElementChild.querySelector('.access-person-actions').replaceChildren();
+    });
+    firstActions.append(removeFirst);
+  }
+}
+
+async function loadPermits() {
+  const search = document.querySelector('#permit-search').value;
+  const permits = await api(`/api/security/permits?search=${encodeURIComponent(search)}`);
+  const body = document.querySelector('#permit-list');
+  body.replaceChildren();
+  const alerts = permits.filter((permit) => permit.status === 'expired' || permit.status === 'expiring');
+  renderPermitAlerts(alerts);
+  if (!permits.length) return appendTableEmpty(body, 7, 'لا توجد تصاريح مركبات مطابقة.');
+  permits.forEach((permit) => {
+    const row = document.createElement('tr');
+    const permitCell = document.createElement('td');
+    const permitDetails = document.createElement('div');
+    permitDetails.className = 'permit-cell';
+    const photo = document.createElement('img');
+    photo.className = 'permit-thumb';
+    photo.alt = `صورة التصريح ${permit.permit_number}`;
+    api(`/api/media/${permit.media_id}/preview`)
+      .then((blob) => { photo.src = URL.createObjectURL(blob); })
+      .catch(() => { photo.alt = 'تعذرت معاينة الصورة'; });
+    permitDetails.append(photo, textElement('strong', permit.permit_number));
+    permitCell.append(permitDetails);
+    const driver = document.createElement('td');
+    driver.append(textElement('span', permit.driver_name), textElement('small', permit.organization || '—'));
+    const contact = document.createElement('td');
+    contact.append(textElement('span', permit.identity_number), textElement('small', permit.phone));
+    const details = document.createElement('td');
+    details.append(textElement('span', permit.purpose), textElement('small', permit.organization || '—'));
+    const validity = document.createElement('td');
+    validity.append(textElement('span', permit.valid_until), textElement('small', `من ${permit.valid_from}`));
+    const status = document.createElement('td');
+    const badge = textElement('span', permitStatusLabels[permit.status]);
+    badge.className = `tag permit-status ${permit.status}`;
+    status.append(badge);
+    row.append(permitCell, textElement('td', permit.vehicle_plate), driver, contact, details, validity, status);
+    body.append(row);
+  });
+}
+
+function renderPermitAlerts(permits) {
+  const container = document.querySelector('#permit-alerts');
+  container.replaceChildren();
+  if (!permits.length) return appendEmpty(container, 'لا توجد تصاريح منتهية أو قريبة الانتهاء.');
+  permits.forEach((permit) => {
+    const alert = document.createElement('div');
+    alert.className = `permit-alert ${permit.status}`;
+    alert.append(
+      textElement('strong', `${permitStatusLabels[permit.status]} · ${permit.permit_number}`),
+      textElement('span', `المركبة ${permit.vehicle_plate} · السائق ${permit.driver_name} · تاريخ الانتهاء ${permit.valid_until}`)
+    );
+    container.append(alert);
+  });
+}
+
+function textElement(tagName, text) {
+  const element = document.createElement(tagName);
+  element.textContent = text;
+  return element;
+}
+
+function appendTableEmpty(body, columnCount, message) {
+  const row = document.createElement('tr');
+  const cell = document.createElement('td');
+  cell.colSpan = columnCount;
+  cell.className = 'empty-row';
+  cell.textContent = message;
+  row.append(cell);
+  body.append(row);
+}
+
+function formatTimestamp(timestamp) {
+  return new Date(timestamp.replace(' ', 'T') + 'Z').toLocaleString('ar-SA');
+}
 
 async function loadDashboard() {
   const [summary, documents] = await Promise.all([
@@ -504,5 +739,6 @@ function appendEmpty(container, message) {
 }
 
 document.querySelector('#transaction-form').elements.date.value = new Date().toISOString().slice(0, 10);
+addAccessPerson();
 if (localStorage.getItem(tokenKey)) enterApp();
 else checkSetup();

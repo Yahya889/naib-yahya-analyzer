@@ -30,6 +30,7 @@
         <a class="brand" href="#dashboard"><span class="brand-mark">ن</span><span>نائب<small>إدارة الأعمال</small></span></a>
         <nav aria-label="القائمة الرئيسية">
           <a href="#dashboard" data-page="dashboard" class="active"><span>⌂</span> الرئيسية</a>
+          <a href="#security" data-page="security"><span>▣</span> أمن الموقع</a>
           <a href="#documents" data-page="documents"><span>▤</span> تحليل المستندات</a>
           <a href="#accounting" data-page="accounting"><span>◈</span> المحاسبة</a>
           <a href="#media" data-page="media"><span>▧</span> الوسائط والملفات</a>
@@ -62,6 +63,54 @@
           </div>
           <div class="panel chart-panel"><div class="panel-heading"><div><h2>التدفق المالي</h2><p>ملخص الإيرادات والمصروفات الشهرية · SAR</p></div><span id="chart-year" class="year-label"></span></div><div id="chart" class="chart" aria-label="رسم بياني للتدفق المالي"></div></div>
           <div class="disclaimer"><span>ⓘ</span><p>تحليل البنود آلي وأولي، ولا يُعدّ استشارة قانونية أو تأكيداً للامتثال للأنظمة السعودية. راجع محامياً مرخصاً.</p></div>
+        </section>
+
+        <section class="page" id="page-security" hidden>
+          <div class="section-intro"><div><p class="eyebrow">إدارة الموقع</p><h2>أمن الموقع والدخول والخروج</h2><p>سجّل بيانات الزوار ومرافقيهم، وتابع الموجودين داخل الموقع وتصاريح المركبات.</p></div></div>
+          <div class="metrics compact">
+            <article class="metric-card"><span>الأشخاص داخل الموقع</span><strong id="security-inside-count">0</strong><small>حسب السجلات المفتوحة</small></article>
+            <article class="metric-card"><span>زيارات لم تسجل مغادرتها</span><strong id="security-active-visits">0</strong><small>سجل دخول مفتوح</small></article>
+            <article class="metric-card"><span>تصاريح منتهية أو تنتهي قريباً</span><strong id="security-expiring-count">0</strong><small>تنبيه خلال 30 يوماً</small></article>
+          </div>
+          <form id="access-form" class="panel">
+            <div class="panel-heading"><div><h2>تسجيل دخول إلى الموقع</h2><p>أضف بيانات كل شخص يدخل، ثم سجّل خروج السجل عند مغادرة الموقع.</p></div></div>
+            <div id="access-people-list" class="access-people-list"></div>
+            <button id="add-access-person" class="button secondary add-person-button" type="button">+ إضافة شخص</button>
+            <div class="form-grid security-form-grid access-visit-fields">
+              <label>الجهة / الشركة<input name="organization" maxlength="120"></label>
+              <label>الغرض من الزيارة<input name="purpose" maxlength="200" required></label>
+              <label>البوابة<input name="gate" maxlength="80" required></label>
+              <label>لوحة المركبة (اختياري)<input name="vehiclePlate" maxlength="30"></label>
+            </div>
+            <button class="button primary form-submit" type="submit">تسجيل الدخول</button>
+          </form>
+          <div class="panel">
+            <div class="panel-heading"><div><h2>سجل الدخول والخروج</h2><p>تظهر أحدث 200 نتيجة؛ سجّل وقت المغادرة عند خروج المجموعة.</p></div>
+              <div class="security-filters"><select id="access-status" aria-label="تصفية حسب حالة الزيارة"><option value="all">كل الزيارات</option><option value="inside">داخل الموقع</option><option value="exited">غادرت الموقع</option></select><input id="access-search" class="search-input" type="search" placeholder="بحث بالاسم أو الهوية أو اللوحة"></div>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>الاسم والهوية</th><th>الجهة والغرض</th><th>العدد</th><th>البوابة / اللوحة</th><th>الدخول</th><th>الخروج</th><th></th></tr></thead><tbody id="access-list"></tbody></table></div>
+          </div>
+          <form id="permit-form" class="panel">
+            <div class="panel-heading"><div><h2>إضافة تصريح مركبة</h2><p>أرفق صورة التصريح؛ الحد الأقصى 10 ميجابايت بصيغة JPG أو PNG.</p></div></div>
+            <div class="form-grid security-form-grid">
+              <label>رقم التصريح<input name="permitNumber" maxlength="80" required></label>
+              <label>لوحة المركبة<input name="vehiclePlate" maxlength="30" required></label>
+              <label>اسم السائق<input name="driverName" maxlength="120" required></label>
+              <label>رقم الهوية / الموظف<input name="identityNumber" maxlength="40" required></label>
+              <label>رقم الهاتف<input name="phone" type="tel" maxlength="30" required></label>
+              <label>الجهة / الشركة<input name="organization" maxlength="120"></label>
+              <label>الغرض<input name="purpose" maxlength="200" required></label>
+              <label>صالح من<input name="validFrom" type="date" required></label>
+              <label>صالح حتى<input name="validUntil" type="date" required></label>
+              <label class="permit-photo-field">صورة التصريح<input name="permitPhoto" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" capture="environment" required></label>
+            </div>
+            <button class="button primary form-submit" type="submit">حفظ التصريح</button>
+          </form>
+          <div class="panel">
+            <div class="panel-heading"><div><h2>تنبيهات صلاحية التصاريح</h2><p>التنبيه يعرض التصاريح المنتهية أو التي تنتهي خلال 30 يوماً.</p></div><input id="permit-search" class="search-input" type="search" placeholder="بحث برقم التصريح أو اللوحة"></div>
+            <div id="permit-alerts" class="permit-alerts" aria-live="polite"></div>
+            <div class="table-wrap"><table><thead><tr><th>التصريح / الصورة</th><th>المركبة</th><th>السائق</th><th>الهوية والهاتف</th><th>الجهة والغرض</th><th>الصلاحية</th><th>الحالة</th></tr></thead><tbody id="permit-list"></tbody></table></div>
+          </div>
         </section>
 
         <section class="page" id="page-documents" hidden>

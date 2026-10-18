@@ -34,6 +34,7 @@ test('authenticates users and provides protected document, accounting, and media
   assert.deepEqual(await status.json(), { configured: false });
   assert.match(status.headers.get('content-security-policy'), /img-src 'self' data: blob:;/);
   assert.equal((await request('/api/documents')).status, 401);
+  assert.equal((await request('/api/security/summary')).status, 401);
 
   const registration = await request('/api/auth/register', json('POST', {
     username: 'owner',
@@ -116,6 +117,77 @@ test('authenticates users and provides protected document, accounting, and media
     headers: authHeaders(staff.token),
     body: rejectedUpload
   })).status, 400);
+
+  const access = await request('/api/security/access', json('POST', {
+    people: [
+      { name: 'زائر أول', identityNumber: 'ID-101', phone: '0500000001' },
+      { name: 'زائر ثان', identityNumber: 'ID-102', phone: '0500000002' }
+    ],
+    organization: 'شركة تجريبية',
+    purpose: 'زيارة عمل',
+    gate: 'البوابة الرئيسية',
+    vehiclePlate: 'ABC 123'
+  }, staff.token));
+  assert.equal(access.status, 201);
+  const accessRecord = await access.json();
+  assert.equal(accessRecord.person_count, 2);
+  const accessList = await (await request('/api/security/access?status=inside&search=ID-102', {
+    headers: authHeaders(staff.token)
+  })).json();
+  assert.equal(accessList.length, 1);
+  assert.equal(accessList[0].members.length, 2);
+  const securitySummary = await (await request('/api/security/summary', {
+    headers: authHeaders(staff.token)
+  })).json();
+  assert.equal(securitySummary.people_inside, 2);
+  assert.equal(securitySummary.active_visits, 1);
+  const exitResponse = await request(`/api/security/access/${accessRecord.id}/exit`, {
+    method: 'POST',
+    headers: authHeaders(staff.token)
+  });
+  assert.equal(exitResponse.status, 200);
+  assert.ok((await exitResponse.json()).exited_at);
+  assert.equal((await request(`/api/security/access/${accessRecord.id}/exit`, {
+    method: 'POST',
+    headers: authHeaders(staff.token)
+  })).status, 409);
+
+  const validUntil = new Date();
+  validUntil.setUTCDate(validUntil.getUTCDate() + 7);
+  const permitForm = new FormData();
+  for (const [key, value] of Object.entries({
+    permitNumber: 'VP-001',
+    vehiclePlate: 'XYZ 987',
+    driverName: 'سائق تجريبي',
+    identityNumber: 'ID-201',
+    phone: '0500000003',
+    organization: 'شركة تجريبية',
+    purpose: 'توريد',
+    validFrom: '2020-01-01',
+    validUntil: validUntil.toISOString().slice(0, 10)
+  })) permitForm.append(key, value);
+  permitForm.append('permitPhoto', new Blob(['test permit image'], { type: 'image/png' }), 'permit.png');
+  const permitResponse = await request('/api/security/permits', {
+    method: 'POST',
+    headers: authHeaders(staff.token),
+    body: permitForm
+  });
+  assert.equal(permitResponse.status, 201);
+  const permit = await permitResponse.json();
+  const permitList = await (await request('/api/security/permits?status=expiring&search=XYZ', {
+    headers: authHeaders(staff.token)
+  })).json();
+  assert.equal(permitList.length, 1);
+  assert.equal(permitList[0].status, 'expiring');
+  assert.equal((await (await request('/api/security/summary', {
+    headers: authHeaders(staff.token)
+  })).json()).expiring_permits, 1);
+  const permitImage = await request(`/api/media/${permit.media_id}/preview`, { headers: authHeaders(staff.token) });
+  assert.equal(permitImage.status, 200);
+  assert.equal((await request(`/api/media/${permit.media_id}`, {
+    method: 'DELETE',
+    headers: authHeaders(staff.token)
+  })).status, 409);
 
   let limitedResponse;
   for (let i = 0; i < 300; i += 1) limitedResponse = await request('/api/health');

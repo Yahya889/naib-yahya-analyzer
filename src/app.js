@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const multer = require('multer');
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
+const MAX_PERMIT_PHOTO_SIZE = 10 * 1024 * 1024;
 const ALLOWED_TYPES = {
   '.pdf': ['application/pdf'],
   '.doc': ['application/msword', 'application/octet-stream'],
@@ -91,6 +92,44 @@ function createApp(options = {}) {
       details TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS security_access (
+      id INTEGER PRIMARY KEY,
+      person_name TEXT NOT NULL,
+      identity_number TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      organization TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      gate TEXT NOT NULL,
+      person_count INTEGER NOT NULL CHECK (person_count > 0),
+      vehicle_plate TEXT NOT NULL DEFAULT '',
+      entered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      exited_at TEXT,
+      created_by INTEGER REFERENCES users(id)
+    );
+    CREATE TABLE IF NOT EXISTS security_access_members (
+      id INTEGER PRIMARY KEY,
+      access_id INTEGER NOT NULL REFERENCES security_access(id) ON DELETE CASCADE,
+      person_name TEXT NOT NULL,
+      identity_number TEXT NOT NULL,
+      phone TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS vehicle_permits (
+      id INTEGER PRIMARY KEY,
+      permit_number TEXT NOT NULL UNIQUE,
+      vehicle_plate TEXT NOT NULL,
+      driver_name TEXT NOT NULL,
+      identity_number TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      organization TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      valid_from TEXT NOT NULL,
+      valid_until TEXT NOT NULL,
+      media_id INTEGER NOT NULL REFERENCES media(id),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by INTEGER REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS security_access_status_idx ON security_access(exited_at, id DESC);
+    CREATE INDEX IF NOT EXISTS vehicle_permits_expiry_idx ON vehicle_permits(valid_until);
   `);
 
   const app = express();
@@ -241,6 +280,222 @@ function createApp(options = {}) {
   });
 
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+  app.get('/api/security/summary', requireAuth, (_req, res) => {
+    const access = db.prepare(`
+      SELECT COALESCE(SUM(person_count), 0) AS people_inside,
+        COUNT(*) AS active_visits
+      FROM security_access WHERE exited_at IS NULL
+    `).get();
+    const permits = db.prepare(`
+      SELECT
+        SUM(CASE WHEN valid_until < date('now') THEN 1 ELSE 0 END) AS expired,
+        SUM(CASE WHEN valid_from <= date('now') AND valid_until >= date('now')
+          AND valid_until <= date('now', '+30 days') THEN 1 ELSE 0 END) AS expiring
+      FROM vehicle_permits
+    `).get();
+    res.json({
+      people_inside: access.people_inside,
+      active_visits: access.active_visits,
+      expired_permits: permits.expired || 0,
+      expiring_permits: permits.expiring || 0
+    });
+  });
+
+  app.get('/api/security/access', requireAuth, (req, res) => {
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
+    const status = req.query.status || 'all';
+    if (!['all', 'inside', 'exited'].includes(status)) {
+      return res.status(400).json({ error: 'حالة سجل الدخول غير صالحة.' });
+    }
+    const records = db.prepare(`
+      SELECT id, person_name, identity_number, phone, organization, purpose, gate,
+        person_count, vehicle_plate, entered_at, exited_at
+      FROM security_access
+      WHERE (? = 'all' OR (? = 'inside' AND exited_at IS NULL) OR (? = 'exited' AND exited_at IS NOT NULL))
+        AND (? = '' OR person_name LIKE ? OR identity_number LIKE ? OR phone LIKE ?
+          OR organization LIKE ? OR vehicle_plate LIKE ? OR EXISTS (
+            SELECT 1 FROM security_access_members member
+            WHERE member.access_id = security_access.id
+              AND (member.person_name LIKE ? OR member.identity_number LIKE ? OR member.phone LIKE ?)
+          ))
+      ORDER BY id DESC LIMIT 200
+    `).all(
+      status, status, status, search,
+      `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`,
+      `%${search}%`, `%${search}%`, `%${search}%`
+    );
+    if (!records.length) return res.json(records);
+    const placeholders = records.map(() => '?').join(',');
+    const members = db.prepare(`
+      SELECT access_id, person_name, identity_number, phone
+      FROM security_access_members WHERE access_id IN (${placeholders}) ORDER BY id
+    `).all(...records.map((record) => record.id));
+    const membersByAccess = new Map();
+    members.forEach((member) => {
+      const list = membersByAccess.get(member.access_id) || [];
+      list.push({ name: member.person_name, identity_number: member.identity_number, phone: member.phone });
+      membersByAccess.set(member.access_id, list);
+    });
+    res.json(records.map((record) => ({ ...record, members: membersByAccess.get(record.id) || [] })));
+  });
+
+  app.post('/api/security/access', requireAuth, (req, res) => {
+    const {
+      people, organization = '', purpose, gate, vehiclePlate = ''
+    } = req.body || {};
+    const requiredText = (value, max) =>
+      typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
+    if (!Array.isArray(people) || people.length < 1 || people.length > 200 ||
+        people.some((person) => !person || !requiredText(person.name, 120) ||
+          !requiredText(person.identityNumber, 40) || !requiredText(person.phone, 30)) ||
+        typeof organization !== 'string' || organization.trim().length > 120 ||
+        !requiredText(purpose, 200) || !requiredText(gate, 80) ||
+        typeof vehiclePlate !== 'string' || vehiclePlate.trim().length > 30) {
+      return res.status(400).json({ error: 'أدخل بيانات كل شخص (الاسم والهوية والهاتف) وتحقق من الجهة والغرض والبوابة.' });
+    }
+    const record = db.transaction(() => {
+      const firstPerson = people[0];
+      const result = db.prepare(`
+        INSERT INTO security_access
+          (person_name, identity_number, phone, organization, purpose, gate, person_count, vehicle_plate, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        firstPerson.name.trim(), firstPerson.identityNumber.trim(), firstPerson.phone.trim(),
+        organization.trim(), purpose.trim(), gate.trim(), people.length, vehiclePlate.trim(), req.userId
+      );
+      const addMember = db.prepare(`
+        INSERT INTO security_access_members (access_id, person_name, identity_number, phone)
+        VALUES (?, ?, ?, ?)
+      `);
+      people.forEach((person) => addMember.run(
+        result.lastInsertRowid, person.name.trim(), person.identityNumber.trim(), person.phone.trim()
+      ));
+      audit('تسجيل دخول للموقع', { accessId: result.lastInsertRowid, personCount: people.length });
+      return db.prepare('SELECT * FROM security_access WHERE id = ?').get(result.lastInsertRowid);
+    })();
+    record.members = people.map((person) => ({
+      name: person.name.trim(),
+      identity_number: person.identityNumber.trim(),
+      phone: person.phone.trim()
+    }));
+    res.status(201).json(record);
+  });
+
+  app.post('/api/security/access/:id/exit', requireAuth, (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'رقم السجل غير صالح.' });
+    const record = db.prepare('SELECT id, exited_at FROM security_access WHERE id = ?').get(id);
+    if (!record) return res.status(404).json({ error: 'سجل الدخول غير موجود.' });
+    if (record.exited_at) return res.status(409).json({ error: 'تم تسجيل خروج هذا السجل مسبقاً.' });
+    db.prepare('UPDATE security_access SET exited_at = CURRENT_TIMESTAMP WHERE id = ? AND exited_at IS NULL').run(id);
+    audit('تسجيل خروج من الموقع', { accessId: id });
+    res.json(db.prepare('SELECT * FROM security_access WHERE id = ?').get(id));
+  });
+
+  const permitPhotoUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, callback) => callback(null, storagePath),
+      filename: (_req, file, callback) => callback(null, `${crypto.randomUUID()}${path.extname(file.originalname).toLowerCase()}`)
+    }),
+    limits: { fileSize: MAX_PERMIT_PHOTO_SIZE, files: 1 },
+    fileFilter: (_req, file, callback) => {
+      const extension = path.extname(file.originalname).toLowerCase();
+      if (!['.jpg', '.jpeg', '.png'].includes(extension) ||
+          !ALLOWED_TYPES[extension]?.includes(file.mimetype)) {
+        return callback(new Error('صورة التصريح يجب أن تكون JPG أو PNG.'));
+      }
+      callback(null, true);
+    }
+  });
+
+  app.get('/api/security/permits', requireAuth, (req, res) => {
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
+    const status = req.query.status || 'all';
+    if (!['all', 'active', 'upcoming', 'expiring', 'expired'].includes(status)) {
+      return res.status(400).json({ error: 'حالة التصريح غير صالحة.' });
+    }
+    const permits = db.prepare(`
+      SELECT p.id, p.permit_number, p.vehicle_plate, p.driver_name, p.identity_number,
+        p.phone, p.organization, p.purpose, p.valid_from, p.valid_until, p.media_id, p.created_at,
+        CASE WHEN p.valid_from > date('now') THEN 'upcoming'
+          WHEN p.valid_until < date('now') THEN 'expired'
+          WHEN p.valid_until <= date('now', '+30 days') THEN 'expiring'
+          ELSE 'active' END AS status
+      FROM vehicle_permits p
+      WHERE (? = 'all'
+        OR (? = 'expired' AND p.valid_until < date('now'))
+        OR (? = 'expiring' AND p.valid_from <= date('now') AND p.valid_until >= date('now') AND p.valid_until <= date('now', '+30 days'))
+        OR (? = 'active' AND p.valid_from <= date('now') AND p.valid_until > date('now', '+30 days'))
+        OR (? = 'upcoming' AND p.valid_from > date('now')))
+        AND (? = '' OR p.permit_number LIKE ? OR p.vehicle_plate LIKE ?
+          OR p.driver_name LIKE ? OR p.identity_number LIKE ? OR p.organization LIKE ?)
+      ORDER BY p.valid_until ASC, p.id DESC LIMIT 500
+    `).all(status, status, status, status, status, search, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    res.json(permits);
+  });
+
+  app.post('/api/security/permits', requireAuth, permitPhotoUpload.single('permitPhoto'), (req, res) => {
+    const photoPath = req.file ? path.join(storagePath, req.file.filename) : null;
+    const {
+      permitNumber, vehiclePlate, driverName, identityNumber, phone,
+      organization = '', purpose, validFrom, validUntil
+    } = req.body || {};
+    const requiredText = (value, max) =>
+      typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
+    const validDate = (value) => {
+      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    const invalid = !req.file || !requiredText(permitNumber, 80) || !requiredText(vehiclePlate, 30) ||
+      !requiredText(driverName, 120) || !requiredText(identityNumber, 40) ||
+      !requiredText(phone, 30) || typeof organization !== 'string' || organization.trim().length > 120 ||
+      !requiredText(purpose, 200) || !validDate(validFrom) || !validDate(validUntil) ||
+      validUntil < validFrom;
+    if (invalid) {
+      if (photoPath) fs.rmSync(photoPath, { force: true });
+      return res.status(400).json({ error: 'أكمل بيانات التصريح وتأكد من صحة فترة الصلاحية وإرفاق صورة JPG أو PNG.' });
+    }
+
+    try {
+      const createPermit = db.transaction(() => {
+        const mediaResult = db.prepare(`
+          INSERT INTO media (filename, original_name, mime_type, size, category)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(
+          req.file.filename,
+          path.basename(req.file.originalname.replaceAll('\\', '/')).slice(0, 255),
+          req.file.mimetype,
+          req.file.size,
+          'تصاريح المركبات'
+        );
+        const permitResult = db.prepare(`
+          INSERT INTO vehicle_permits
+            (permit_number, vehicle_plate, driver_name, identity_number, phone, organization,
+              purpose, valid_from, valid_until, media_id, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          permitNumber.trim(), vehiclePlate.trim(), driverName.trim(), identityNumber.trim(),
+          phone.trim(), organization.trim(), purpose.trim(), validFrom, validUntil,
+          mediaResult.lastInsertRowid, req.userId
+        );
+        audit('إضافة تصريح مركبة', { permitId: permitResult.lastInsertRowid });
+        return db.prepare(`
+          SELECT id, permit_number, vehicle_plate, driver_name, identity_number, phone,
+            organization, purpose, valid_from, valid_until, media_id, created_at
+          FROM vehicle_permits WHERE id = ?
+        `).get(permitResult.lastInsertRowid);
+      });
+      res.status(201).json(createPermit());
+    } catch (error) {
+      if (photoPath) fs.rmSync(photoPath, { force: true });
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return res.status(409).json({ error: 'رقم التصريح مسجل مسبقاً.' });
+      }
+      throw error;
+    }
+  });
 
   app.get('/api/documents', requireAuth, (_req, res) => {
     const documents = db.prepare('SELECT id, title, analysis_json, created_at FROM documents ORDER BY id DESC').all()
@@ -411,6 +666,9 @@ function createApp(options = {}) {
   app.delete('/api/media/:id', requireAuth, (req, res) => {
     const file = db.prepare('SELECT * FROM media WHERE id = ?').get(Number(req.params.id));
     if (!file) return res.status(404).json({ error: 'الملف غير موجود.' });
+    if (db.prepare('SELECT 1 FROM vehicle_permits WHERE media_id = ?').get(file.id)) {
+      return res.status(409).json({ error: 'لا يمكن حذف صورة مرتبطة بتصريح مركبة.' });
+    }
     db.prepare('DELETE FROM media WHERE id = ?').run(file.id);
     fs.rmSync(path.join(storagePath, file.filename), { force: true });
     audit('حذف ملف', { mediaId: file.id });
@@ -425,10 +683,11 @@ function createApp(options = {}) {
   app.use(express.static(path.resolve(__dirname, '../public')));
   app.use((error, _req, res, _next) => {
     if (error instanceof multer.MulterError) {
-      const message = error.code === 'LIMIT_FILE_SIZE' ? 'حجم الملف يتجاوز الحد الأقصى (100 ميجابايت).' : 'تعذر رفع الملف.';
+      const maxSize = error.field === 'permitPhoto' ? '10 ميجابايت' : '100 ميجابايت';
+      const message = error.code === 'LIMIT_FILE_SIZE' ? `حجم الملف يتجاوز الحد الأقصى (${maxSize}).` : 'تعذر رفع الملف.';
       return res.status(400).json({ error: message });
     }
-    if (error.message === 'نوع الملف غير مدعوم أو لا يطابق امتداده.') {
+    if (['نوع الملف غير مدعوم أو لا يطابق امتداده.', 'صورة التصريح يجب أن تكون JPG أو PNG.'].includes(error.message)) {
       return res.status(400).json({ error: error.message });
     }
     console.error(error);
