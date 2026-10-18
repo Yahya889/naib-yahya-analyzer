@@ -62,6 +62,7 @@ function createApp(options = {}) {
       id INTEGER PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
       identity_number TEXT UNIQUE,
+      owner_login_id TEXT UNIQUE,
       password_hash TEXT NOT NULL,
       salt TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('admin', 'staff')),
@@ -168,6 +169,9 @@ function createApp(options = {}) {
   if (!db.pragma('table_info(users)').some((column) => column.name === 'identity_number')) {
     db.exec('ALTER TABLE users ADD COLUMN identity_number TEXT');
   }
+  if (!db.pragma('table_info(users)').some((column) => column.name === 'owner_login_id')) {
+    db.exec('ALTER TABLE users ADD COLUMN owner_login_id TEXT');
+  }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_identity_number_idx ON users(identity_number) WHERE identity_number IS NOT NULL');
   for (const [table, column] of [
     ['security_access', 'vehicle_id'],
@@ -248,6 +252,16 @@ function createApp(options = {}) {
     return { filename, path: filePath };
   }
 
+  function validFullName(value) {
+    return typeof value === 'string' &&
+      /^[\p{L}\p{M}][\p{L}\p{M}\s.'-]{2,79}$/u.test(value.trim()) &&
+      value.trim().split(/\s+/).length >= 2;
+  }
+
+  function validOwnerLoginId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9_.-]{6,32}$/.test(value.trim());
+  }
+
   function makeToken(userId) {
     const payload = Buffer.from(JSON.stringify({ sub: userId, exp: Date.now() + 12 * 60 * 60 * 1000 })).toString('base64url');
     const signature = crypto.createHmac('sha256', tokenSecret).update(payload).digest('base64url');
@@ -302,7 +316,7 @@ function createApp(options = {}) {
   });
 
   app.post('/api/auth/register', authRateLimit, (req, res) => {
-    const { username, identityNumber, password, setupKey } = req.body || {};
+    const { username, ownerLoginId, password, setupKey } = req.body || {};
     if (!initialAdminSetupKey) {
       return res.status(503).json({ error: 'إعداد الحساب الأول غير متاح؛ اطلب من مسؤول الخادم تهيئة المنصة.' });
     }
@@ -311,11 +325,11 @@ function createApp(options = {}) {
     if (providedKey.length !== expectedKey.length || !crypto.timingSafeEqual(providedKey, expectedKey)) {
       return res.status(403).json({ error: 'رمز إعداد المسؤول غير صحيح.' });
     }
-    if (typeof username !== 'string' || !/^[\p{L}\p{N}_.-]{3,40}$/u.test(username.trim())) {
-      return res.status(400).json({ error: 'أدخل اسماً من 3 إلى 40 حرفاً أو رقماً.' });
+    if (!validFullName(username)) {
+      return res.status(400).json({ error: 'أدخل الاسم الكامل.' });
     }
-    if (typeof identityNumber !== 'string' || !/^\d{10}$/.test(identityNumber.trim())) {
-      return res.status(400).json({ error: 'رقم الهوية يجب أن يتكون من 10 أرقام.' });
+    if (!validOwnerLoginId(ownerLoginId)) {
+      return res.status(400).json({ error: 'معرف المالك يجب أن يتكون من 6 إلى 32 حرفاً إنجليزياً أو رقماً.' });
     }
     if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
       return res.status(400).json({ error: 'كلمة المرور يجب أن تتكون من 12 حرفاً على الأقل.' });
@@ -325,22 +339,27 @@ function createApp(options = {}) {
     }
     const salt = crypto.randomBytes(16).toString('hex');
     const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
-    const result = db.prepare('INSERT INTO users (username, identity_number, password_hash, salt, role) VALUES (?, ?, ?, ?, ?)')
-      .run(username.trim(), identityNumber.trim(), passwordHash, salt, 'admin');
+    const result = db.prepare('INSERT INTO users (username, owner_login_id, password_hash, salt, role) VALUES (?, ?, ?, ?, ?)')
+      .run(username.trim(), ownerLoginId.trim(), passwordHash, salt, 'admin');
     audit('إنشاء الحساب الأول', { userId: result.lastInsertRowid });
     res.status(201).json({ token: makeToken(result.lastInsertRowid), username: username.trim() });
   });
 
   app.post('/api/auth/login', authRateLimit, (req, res) => {
-    const { identityNumber, username, password } = req.body || {};
-    const identifier = typeof identityNumber === 'string' ? identityNumber.trim() : username;
+    const { loginId, identityNumber, username, password } = req.body || {};
+    const identifier = typeof loginId === 'string'
+      ? loginId.trim()
+      : typeof identityNumber === 'string' ? identityNumber.trim() : username;
     if (typeof identifier !== 'string' || typeof password !== 'string') {
       return res.status(400).json({ error: 'أدخل رقم الهوية وكلمة المرور.' });
     }
     const user = db.prepare(`
-      SELECT * FROM users WHERE identity_number = ?
-        OR (identity_number IS NULL AND username = ?)
-    `).get(identifier, identifier);
+      SELECT * FROM users
+      WHERE owner_login_id = ? OR identity_number = ?
+        OR (identity_number IS NULL AND owner_login_id IS NULL AND username = ?)
+      ORDER BY CASE WHEN owner_login_id = ? THEN 0 WHEN identity_number = ? THEN 1 ELSE 2 END
+      LIMIT 1
+    `).get(identifier, identifier, identifier, identifier, identifier);
     const salt = user?.salt || crypto.randomBytes(16).toString('hex');
     const actual = crypto.scryptSync(password, salt, 64);
     const expected = user ? Buffer.from(user.password_hash, 'hex') : Buffer.alloc(64);
