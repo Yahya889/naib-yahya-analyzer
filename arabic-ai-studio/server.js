@@ -30,13 +30,17 @@ function send(res, status, payload, contentType = 'application/json; charset=utf
 
 async function readJson(req) {
   let body = '';
+  let bodySize = 0;
+  let tooLarge = false;
   for await (const chunk of req) {
-    body += chunk;
-    if (Buffer.byteLength(body) > MAX_BODY_SIZE) {
-      const error = new Error('الطلب كبير جداً.');
-      error.status = 413;
-      throw error;
-    }
+    bodySize += chunk.length;
+    if (bodySize > MAX_BODY_SIZE) tooLarge = true;
+    if (!tooLarge) body += chunk;
+  }
+  if (tooLarge) {
+    const error = new Error('الطلب كبير جداً.');
+    error.status = 413;
+    throw error;
   }
   try {
     return JSON.parse(body);
@@ -52,7 +56,26 @@ function createServer({ fetchImpl = fetch, ollamaUrl = OLLAMA_URL, model = MODEL
     const requestUrl = new URL(req.url, `http://${HOST}`);
 
     if (req.method === 'GET' && requestUrl.pathname === '/api/health') {
-      return send(res, 200, { ok: true, model });
+      let ollamaAvailable = false;
+      let modelAvailable = false;
+      try {
+        const response = await fetchImpl(ollamaUrl.replace(/\/api\/chat\/?$/, '/api/tags'), {
+          signal: AbortSignal.timeout(3000)
+        });
+        if (response.ok) {
+          const result = await response.json();
+          ollamaAvailable = true;
+          modelAvailable = Array.isArray(result.models) &&
+            result.models.some((entry) => entry.name === model);
+        }
+      } catch {}
+      return send(res, 200, {
+        ok: ollamaAvailable && modelAvailable,
+        ollamaAvailable,
+        modelAvailable,
+        model,
+        installCommand: `ollama pull ${model}`
+      });
     }
 
     if (req.method === 'POST' && requestUrl.pathname === '/api/chat') {

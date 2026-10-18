@@ -29,6 +29,20 @@
       </nav>
 
       <section id="workspace" class="tab-panel">
+        <section class="setup-check" aria-live="polite">
+          <div><strong id="setup-title">جارٍ فحص Ollama والنموذج…</strong><p id="setup-details">يعمل النموذج على جهازك؛ لا حاجة إلى مفتاح API.</p></div>
+          <code id="install-command" hidden></code>
+          <button type="button" class="button small" id="check-model-button">إعادة الفحص</button>
+        </section>
+        <section class="templates panel">
+          <div><p class="eyebrow">ابدأ بسرعة</p><h2>قوالب مهام عملية</h2></div>
+          <div class="template-buttons">
+            <button type="button" class="template-chip" data-template="أنشئ خطة تسويق عملية لمشروع صغير في السعودية لمدة شهر. اقترح الجمهور المستهدف، عروضاً مناسبة، تقويماً أسبوعياً للمحتوى، ومؤشرات قابلة للقياس.">خطة تسويق لمشروع صغير</button>
+            <button type="button" class="template-chip" data-template="أنشئ جدول تدفق نقدي شهرياً لمشروع صغير. وضّح الأعمدة اللازمة للإيرادات والمصروفات والرصيد، وأضف خطوات مراجعة الافتراضات. لا تختلق أرقاماً؛ استخدم خانات فارغة عند نقص البيانات.">نموذج تدفق نقدي</button>
+            <button type="button" class="template-chip" data-template="أنشئ تقويماً تحريرياً لمدة أربعة أسابيع لنشاط تجاري سعودي. نوّع بين التوعية والتثقيف والعروض، واقترح عنواناً ونداءً لاتخاذ إجراء لكل منشور.">تقويم محتوى شهر</button>
+            <button type="button" class="template-chip" data-template="حلل فكرة هذا المنتج من ناحية العميل المستهدف والمشكلة والقيمة المقترحة والمنافسين والافتراضات التي تحتاج إلى تحقق. اختم بتجربة صغيرة لاختبار الطلب قبل الاستثمار.">اختبار فكرة منتج</button>
+          </div>
+        </section>
         <div class="workspace-grid">
           <form id="task-form" class="panel task-panel">
             <p class="eyebrow">مساعد المهام</p>
@@ -54,10 +68,14 @@
           </form>
           <section class="panel result-panel" aria-live="polite">
             <div class="result-heading"><div><p class="eyebrow">مسودة قابلة للتعديل</p><h2 id="result-title">ابدأ بطلبك</h2></div><button type="button" id="download-button" class="button small" disabled>تنزيل النص</button></div>
-            <textarea id="result" rows="18" placeholder="ستظهر الخطة أو المسودة هنا. راجعها وتحقق من المعلومات قبل استخدامها." aria-label="المخرجات القابلة للتعديل"></textarea>
+            <textarea id="result" rows="18" maxlength="30000" placeholder="ستظهر الخطة أو المسودة هنا. راجعها وتحقق من المعلومات قبل استخدامها." aria-label="المخرجات القابلة للتعديل"></textarea>
             <div id="cost-note" class="notice">الاستخدام محلي دون اشتراك مزود نماذج. قد توجد تكاليف كهرباء وجهاز وصيانة، وتعتمد السرعة والجودة على إمكانات جهازك والنموذج.</div>
           </section>
         </div>
+        <section class="panel history-panel">
+          <div class="history-heading"><div><p class="eyebrow">في هذا المتصفح فقط</p><h2>المهام السابقة</h2><p>لا تُرفع إلى الخادم ولا تُحفظ ملفات المراجع. امسح السجل قبل مشاركة الجهاز.</p></div><button type="button" class="button small" id="clear-history-button">مسح السجل</button></div>
+          <div id="history-list" class="history-list"></div>
+        </section>
       </section>
 
       <section id="directory" class="tab-panel" hidden>

@@ -26,14 +26,64 @@ test('serves the standalone interface with restrictive browser security headers'
 });
 
 test('reports model configuration and rejects invalid task requests', async () => {
-  await withServer({ model: 'local-test-model' }, async (base) => {
-    assert.deepEqual(await (await fetch(`${base}/api/health`)).json(), { ok: true, model: 'local-test-model' });
+  await withServer({
+    model: 'local-test-model',
+    fetchImpl: async (url) => {
+      assert.equal(url, 'http://127.0.0.1:11434/api/tags');
+      return Response.json({ models: [{ name: 'local-test-model' }] });
+    }
+  }, async (base) => {
+    assert.deepEqual(await (await fetch(`${base}/api/health`)).json(), {
+      ok: true,
+      ollamaAvailable: true,
+      modelAvailable: true,
+      model: 'local-test-model',
+      installCommand: 'ollama pull local-test-model'
+    });
     const response = await fetch(`${base}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ task: '', domain: 'أعمال', phase: 'plan' })
     });
     assert.equal(response.status, 400);
+  });
+});
+
+test('reports missing local model and unavailable Ollama separately', async () => {
+  await withServer({
+    model: 'missing-model',
+    fetchImpl: async () => Response.json({ models: [{ name: 'other-model' }] })
+  }, async (base) => {
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.equal(health.ok, false);
+    assert.equal(health.ollamaAvailable, true);
+    assert.equal(health.modelAvailable, false);
+  });
+
+  await withServer({
+    fetchImpl: async () => { throw new Error('Ollama not running'); }
+  }, async (base) => {
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.equal(health.ollamaAvailable, false);
+    assert.equal(health.modelAvailable, false);
+  });
+});
+
+test('rejects oversized task bodies before using the local model', async () => {
+  let modelCalled = false;
+  await withServer({
+    fetchImpl: async () => {
+      modelCalled = true;
+      return Response.json({ message: { content: 'غير متوقع' } });
+    }
+  }, async (base) => {
+    const response = await fetch(`${base}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: 'x'.repeat(600000), domain: 'أعمال', phase: 'plan' })
+    });
+    assert.equal(response.status, 413);
+    assert.equal(modelCalled, false);
   });
 });
 

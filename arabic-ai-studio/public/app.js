@@ -32,7 +32,9 @@ const tools = [
 ];
 
 const categories = ['الكل', ...new Set(tools.map((tool) => tool.category))];
-const state = { category: 'الكل', reference: '', task: '', plan: '' };
+const HISTORY_KEY = 'midad-task-history';
+const MAX_HISTORY_ITEMS = 20;
+const state = { category: 'الكل', reference: '', task: '', plan: '', historyId: null };
 const taskInput = document.querySelector('#task');
 const domainInput = document.querySelector('#domain');
 const resultInput = document.querySelector('#result');
@@ -63,6 +65,116 @@ function renderCategories() {
     container.append(button);
   });
 }
+
+document.querySelectorAll('[data-template]').forEach((button) => {
+  button.addEventListener('click', () => {
+    taskInput.value = button.dataset.template;
+    taskInput.focus();
+  });
+});
+
+function readHistory() {
+  try {
+    const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    return Array.isArray(history) ? history.filter((entry) =>
+      entry && typeof entry.id === 'string' && typeof entry.task === 'string' &&
+      typeof entry.output === 'string' && typeof entry.createdAt === 'string'
+    ).slice(0, MAX_HISTORY_ITEMS) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(answer, phase) {
+  const entries = readHistory();
+  const entry = {
+    id: state.historyId || crypto.randomUUID(),
+    task: state.task,
+    domain: domainInput.value,
+    plan: state.plan,
+    output: answer,
+    phase,
+    createdAt: new Date().toISOString()
+  };
+  state.historyId = entry.id;
+  const existingIndex = entries.findIndex((item) => item.id === entry.id);
+  if (existingIndex >= 0) entries.splice(existingIndex, 1);
+  entries.unshift(entry);
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, MAX_HISTORY_ITEMS)));
+    renderHistory();
+  } catch {
+    formMessage.textContent = 'تعذر حفظ السجل في المتصفح؛ قد تكون مساحة التخزين ممتلئة.';
+  }
+}
+
+function renderHistory() {
+  const container = document.querySelector('#history-list');
+  container.replaceChildren();
+  const entries = readHistory();
+  if (!entries.length) {
+    const empty = document.createElement('p');
+    empty.className = 'history-empty';
+    empty.textContent = 'لا توجد مهام محفوظة في هذا المتصفح.';
+    container.append(empty);
+    return;
+  }
+  entries.forEach((entry) => {
+    const row = document.createElement('article');
+    row.className = 'history-item';
+    const details = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = entry.task;
+    const meta = document.createElement('small');
+    meta.textContent = `${entry.domain || ''} · ${entry.phase === 'plan' ? 'خطة' : 'مسودة'} · ${new Date(entry.createdAt).toLocaleString('ar-SA')}`;
+    details.append(title, meta);
+    const actions = document.createElement('div');
+    actions.className = 'history-actions';
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'button small';
+    restore.textContent = 'فتح';
+    restore.addEventListener('click', () => {
+      state.historyId = entry.id;
+      state.task = entry.task;
+      state.plan = entry.plan || (entry.phase === 'plan' ? entry.output : '');
+      taskInput.value = entry.task;
+      domainInput.value = entry.domain || domainInput.options[0].value;
+      resultInput.value = entry.output;
+      document.querySelector('#result-title').textContent = entry.phase === 'plan' ? 'الخطة المقترحة' : 'المسودة الناتجة';
+      executeButton.disabled = !state.plan;
+      document.querySelector('#download-button').disabled = false;
+      formMessage.textContent = entry.phase === 'plan' ? 'راجع الخطة، ثم يمكنك إنشاء المسودة.' : 'تم فتح المسودة المحفوظة محلياً.';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'button small danger';
+    remove.textContent = 'حذف';
+    remove.addEventListener('click', () => {
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(readHistory().filter((item) => item.id !== entry.id)));
+        if (state.historyId === entry.id) state.historyId = null;
+        renderHistory();
+      } catch {
+        formMessage.textContent = 'تعذر تعديل السجل المحلي في المتصفح.';
+      }
+    });
+    actions.append(restore, remove);
+    row.append(details, actions);
+    container.append(row);
+  });
+}
+
+document.querySelector('#clear-history-button').addEventListener('click', () => {
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+    state.historyId = null;
+    renderHistory();
+  } catch {
+    formMessage.textContent = 'تعذر مسح السجل المحلي في المتصفح.';
+  }
+});
 
 function renderTools() {
   const container = document.querySelector('#tool-list');
@@ -102,6 +214,7 @@ function renderTools() {
 document.querySelector('#tool-search').addEventListener('input', renderTools);
 renderCategories();
 renderTools();
+renderHistory();
 
 document.querySelector('#reference-file').addEventListener('change', async (event) => {
   const file = event.currentTarget.files[0];
@@ -121,12 +234,15 @@ document.querySelector('#task-form').addEventListener('submit', async (event) =>
   state.task = taskInput.value.trim();
   if (!state.task) return;
   state.plan = '';
+  state.historyId = null;
   executeButton.disabled = true;
   await runPhase('plan');
 });
 
 executeButton.addEventListener('click', async () => {
-  if (!state.plan) return;
+  const reviewedPlan = resultInput.value.trim();
+  if (!reviewedPlan) return;
+  state.plan = reviewedPlan;
   executeButton.disabled = true;
   planButton.disabled = true;
   await runPhase('execute');
@@ -159,6 +275,7 @@ async function runPhase(phase) {
       state.plan = payload.answer;
       executeButton.disabled = false;
     }
+      saveHistory(payload.answer, phase);
   } catch (error) {
     formMessage.textContent = error.message;
   } finally {
@@ -179,12 +296,31 @@ document.querySelector('#download-button').addEventListener('click', () => {
 
 async function checkModel() {
   const status = document.querySelector('#model-status');
+  const setupTitle = document.querySelector('#setup-title');
+  const setupDetails = document.querySelector('#setup-details');
+  const installCommand = document.querySelector('#install-command');
   try {
     const response = await fetch('/api/health');
     const health = await response.json();
-    status.textContent = response.ok ? `نموذج محلي: ${health.model}` : 'تعذر فحص النموذج';
+    status.textContent = health.ok ? `جاهز · ${health.model}` : 'النموذج المحلي غير جاهز';
+    setupTitle.textContent = health.ok ? 'النموذج المحلي جاهز للاستخدام' : 'أكمل إعداد النموذج المحلي';
+    if (!health.ollamaAvailable) {
+      setupDetails.textContent = 'ثبّت Ollama وشغّله أولاً؛ معلومات التثبيت في دليل المشروع.';
+      installCommand.hidden = true;
+    } else if (!health.modelAvailable) {
+      setupDetails.textContent = `Ollama يعمل، لكن النموذج ${health.model} غير موجود على هذا الجهاز.`;
+      installCommand.textContent = health.installCommand;
+      installCommand.hidden = false;
+    } else {
+      setupDetails.textContent = 'طلباتك تُعالج محلياً على هذا الجهاز.';
+      installCommand.hidden = true;
+    }
   } catch {
     status.textContent = 'تعذر الاتصال بالخادم المحلي';
+    setupTitle.textContent = 'تعذر فحص النموذج';
+    setupDetails.textContent = 'تأكد من تشغيل خادم مِداد على هذا الجهاز، ثم أعد الفحص.';
+    installCommand.hidden = true;
   }
 }
 checkModel();
+document.querySelector('#check-model-button').addEventListener('click', checkModel);
