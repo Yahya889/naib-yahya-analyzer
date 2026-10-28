@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#12352d">
+    <title>مِداد | مساحة الذكاء الاصطناعي العربية</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#home"><span class="brand-mark">م</span><span>مِداد<small>مساحة عمل ذكية، محلية ومستقلة</small></span></a>
+      <div class="connection"><span class="status-dot"></span><span id="model-status">جارٍ فحص النموذج المحلي…</span></div>
+    </header>
+    <main>
+      <section class="hero" id="home">
+        <div>
+          <p class="eyebrow">ذكاء اصطناعي يعمل على جهازك</p>
+          <h1>من الفكرة إلى إنجاز واضح.</h1>
+          <p class="hero-copy">خطّط لمهمتك، راجع الخطوات، ثم أنشئ مسودة عربية قابلة للتعديل. لا نرسل طلباتك إلى مزود سحابي.</p>
+        </div>
+        <div class="hero-note"><strong>نموذج أولي مستقل</strong><span>يحتاج Ollama ونموذجاً محلياً. لا يملك حالياً بحثاً مباشراً في الإنترنت أو تنفيذ أفعال خارجية.</span></div>
+      </section>
+
+      <nav class="tabs" aria-label="أقسام مساحة العمل">
+        <button type="button" class="tab active" data-tab="workspace">مساحة العمل</button>
+        <button type="button" class="tab" data-tab="directory">دليل الأدوات</button>
+      </nav>
+
+      <section id="workspace" class="tab-panel">
+        <section class="setup-check" aria-live="polite">
+          <div><strong id="setup-title">جارٍ فحص Ollama والنموذج…</strong><p id="setup-details">يعمل النموذج على جهازك؛ لا حاجة إلى مفتاح API.</p></div>
+          <code id="install-command" hidden></code>
+          <button type="button" class="button small" id="check-model-button">إعادة الفحص</button>
+        </section>
+        <section class="templates panel">
+          <div><p class="eyebrow">ابدأ بسرعة</p><h2>قوالب مهام عملية</h2></div>
+          <div class="template-buttons">
+            <button type="button" class="template-chip" data-template="أنشئ خطة تسويق عملية لمشروع صغير في السعودية لمدة شهر. اقترح الجمهور المستهدف، عروضاً مناسبة، تقويماً أسبوعياً للمحتوى، ومؤشرات قابلة للقياس.">خطة تسويق لمشروع صغير</button>
+            <button type="button" class="template-chip" data-template="أنشئ جدول تدفق نقدي شهرياً لمشروع صغير. وضّح الأعمدة اللازمة للإيرادات والمصروفات والرصيد، وأضف خطوات مراجعة الافتراضات. لا تختلق أرقاماً؛ استخدم خانات فارغة عند نقص البيانات.">نموذج تدفق نقدي</button>
+            <button type="button" class="template-chip" data-template="أنشئ تقويماً تحريرياً لمدة أربعة أسابيع لنشاط تجاري سعودي. نوّع بين التوعية والتثقيف والعروض، واقترح عنواناً ونداءً لاتخاذ إجراء لكل منشور.">تقويم محتوى شهر</button>
+            <button type="button" class="template-chip" data-template="حلل فكرة هذا المنتج من ناحية العميل المستهدف والمشكلة والقيمة المقترحة والمنافسين والافتراضات التي تحتاج إلى تحقق. اختم بتجربة صغيرة لاختبار الطلب قبل الاستثمار.">اختبار فكرة منتج</button>
+          </div>
+        </section>
+        <div class="workspace-grid">
+          <form id="task-form" class="panel task-panel">
+            <p class="eyebrow">مساعد المهام</p>
+            <h2>ما الذي تريد إنجازه؟</h2>
+            <label>المجال المعرفي
+              <select id="domain" name="domain">
+                <option>الأعمال والمنشآت الصغيرة</option>
+                <option>التسويق وصناعة المحتوى</option>
+                <option>التعليم والبحث</option>
+                <option>البرمجة والبيانات</option>
+                <option>التصميم والإبداع</option>
+                <option>الإدارة والإنتاجية</option>
+              </select>
+            </label>
+            <label>وصف المهمة<textarea id="task" name="task" rows="5" maxlength="12000" required placeholder="مثال: أعدّ مسودة خطة تسويق لمقهى جديد في الرياض، مع أفكار محتوى لشهر واحد."></textarea></label>
+            <label class="file-label">أضف نصاً مرجعياً اختيارياً (.txt أو .md، حتى 16 كيلوبايت)
+              <input id="reference-file" type="file" accept=".txt,.md,text/plain,text/markdown">
+            </label>
+            <p class="hint">يُقرأ الملف داخل متصفحك ويُرفق نصه بطلب النموذج المحلي. لا ترفع بيانات حساسة.</p>
+            <button class="button primary" type="submit" id="plan-button">١. اقترح خطة</button>
+            <button class="button secondary" type="button" id="execute-button" disabled>٢. أنشئ المسودة بعد المراجعة</button>
+            <p id="form-message" class="message" role="status" aria-live="polite"></p>
+          </form>
+          <section class="panel result-panel" aria-live="polite">
+            <div class="result-heading"><div><p class="eyebrow">مسودة قابلة للتعديل</p><h2 id="result-title">ابدأ بطلبك</h2></div><button type="button" id="download-button" class="button small" disabled>تنزيل النص</button></div>
+            <textarea id="result" rows="18" maxlength="30000" placeholder="ستظهر الخطة أو المسودة هنا. راجعها وتحقق من المعلومات قبل استخدامها." aria-label="المخرجات القابلة للتعديل"></textarea>
+            <div id="cost-note" class="notice">الاستخدام محلي دون اشتراك مزود نماذج. قد توجد تكاليف كهرباء وجهاز وصيانة، وتعتمد السرعة والجودة على إمكانات جهازك والنموذج.</div>
+          </section>
+        </div>
+        <section class="panel history-panel">
+          <div class="history-heading"><div><p class="eyebrow">في هذا المتصفح فقط</p><h2>المهام السابقة</h2><p>لا تُرفع إلى الخادم ولا تُحفظ ملفات المراجع. امسح السجل قبل مشاركة الجهاز.</p></div><button type="button" class="button small" id="clear-history-button">مسح السجل</button></div>
+          <div id="history-list" class="history-list"></div>
+        </section>
+      </section>
+
+      <section id="directory" class="tab-panel" hidden>
+        <div class="directory-heading">
+          <div><p class="eyebrow">كتالوج استكشافي</p><h2>أدوات الذكاء الاصطناعي حسب المجال</h2><p>أدوات معروفة للبدء، وليست قائمة شاملة أو تصنيفاً رسمياً. تحقّق من الأسعار والتوافر وسياسات الخصوصية لدى الجهة قبل الاستخدام.</p></div>
+          <input id="tool-search" type="search" placeholder="ابحث عن أداة أو استخدام…" aria-label="ابحث في دليل الأدوات">
+        </div>
+        <div id="tool-categories" class="category-filters" aria-label="تصفية حسب المجال"></div>
+        <div id="tool-list" class="tool-grid"></div>
+      </section>
+      <footer><span>مِداد — نموذج أولي عربي مستقل</span><span>المخرجات الآلية تحتاج مراجعة بشرية؛ لا تستخدمها وحدها لقرارات حساسة.</span></footer>
+    </main>
+  </body>
+</html>
